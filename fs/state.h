@@ -13,8 +13,8 @@
  * Directory entry
  */
 typedef struct {
-    char d_name[MAX_FILE_NAME];
-    int d_inumber;
+	char d_name[MAX_FILE_NAME];
+	int d_inumber;
 } dir_entry_t;
 
 typedef enum { T_FILE, T_DIRECTORY } inode_type;
@@ -23,12 +23,12 @@ typedef enum { T_FILE, T_DIRECTORY } inode_type;
  * Inode
  */
 typedef struct {
-    inode_type i_node_type;
+	inode_type i_node_type;
 
-    size_t i_size;
-    int i_data_block;
+	size_t i_size;
+	int i_data_block;
 
-    // in a more complete FS, more fields could exist here
+	// in a more complete FS, more fields could exist here
 } inode_t;
 
 typedef enum { FREE = 0, TAKEN = 1 } allocation_state_t;
@@ -37,8 +37,8 @@ typedef enum { FREE = 0, TAKEN = 1 } allocation_state_t;
  * Open file entry (in open file table)
  */
 typedef struct {
-    int of_inumber;
-    size_t of_offset;
+	int of_inumber;
+	size_t of_offset;
 } open_file_entry_t;
 
 int state_init(tfs_params);

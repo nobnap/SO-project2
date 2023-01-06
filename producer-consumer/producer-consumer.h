@@ -9,23 +9,23 @@
 // implementation
 
 typedef struct {
-    void **pcq_buffer;
-    size_t pcq_capacity;
+	void **pcq_buffer;
+	size_t pcq_capacity;
 
-    pthread_mutex_t pcq_current_size_lock;
-    size_t pcq_current_size;
+	pthread_mutex_t pcq_current_size_lock;
+	size_t pcq_current_size;
 
-    pthread_mutex_t pcq_head_lock;
-    size_t pcq_head;
+	pthread_mutex_t pcq_head_lock;
+	size_t pcq_head;
 
-    pthread_mutex_t pcq_tail_lock;
-    size_t pcq_tail;
+	pthread_mutex_t pcq_tail_lock;
+	size_t pcq_tail;
 
-    pthread_mutex_t pcq_pusher_condvar_lock;
-    pthread_cond_t pcq_pusher_condvar;
+	pthread_mutex_t pcq_pusher_condvar_lock;
+	pthread_cond_t pcq_pusher_condvar;
 
-    pthread_mutex_t pcq_popper_condvar_lock;
-    pthread_cond_t pcq_popper_condvar;
+	pthread_mutex_t pcq_popper_condvar_lock;
+	pthread_cond_t pcq_popper_condvar;
 } pc_queue_t;
 
 // pcq_create: create a queue, with a given (fixed) capacity
