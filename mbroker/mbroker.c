@@ -1,13 +1,12 @@
 #include "logging.h"
+#include "protocol.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
 
-#define PIPE_ERROR "failed to create pipe"
-
-int create_server(const char *pipe_name) {
+int create_server(const char *pipe_name, int num) {
 	// TODO: garantir que não apaga pipes em uso maybe??
 	if (unlink(pipe_name) != 0 && errno != ENOENT) {
 		return -1; // failed to unlink file
@@ -27,7 +26,7 @@ int create_server(const char *pipe_name) {
 }
 
 int main(int argc, char **argv) {
-	if (argc == 2) create_server(argv[1]);
+	if (argc == 3) return create_server(argv[1], argv[2]);
 	fprintf(stderr, "usage: mbroker <pipename>\n");
 
 	return -1;
