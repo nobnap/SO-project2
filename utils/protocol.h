@@ -20,11 +20,6 @@ struct __attribute__((__packed__)) box_answer {
 	char error_message[1024];
 };
 
-struct __attribute__((__packed__)) box_list_request {
-	uint8_t code;
-	char client_named_pipe_path[256];
-};
-
 struct __attribute__((__packed__)) box_list_entry {
 	uint8_t code;
 	uint8_t last;
