@@ -11,6 +11,7 @@
 #define BUFFER_SIZE 128
 
 void handle() {
+	// TODO: implement proper closing
 	fprintf(stdout, "\nReceived messages.\n");
 	exit(EXIT_SUCCESS);
 }
@@ -42,7 +43,7 @@ int subscribe_box(const char *server_pipe, const char *pipe_name,
 
 	printf("REQUEST SENT\n");
 
-	while (access(pipe_name, F_OK) == -1) { /* nothing happens */}
+	while (access(pipe_name, F_OK) == -1) { /* nothing happens */ }
 
 	int pipenum = open(pipe_name, O_RDONLY);
 	if (pipenum == -1) {
@@ -76,6 +77,5 @@ int main(int argc, char **argv) {
 		return subscribe_box(argv[1], argv[2], argv[3]);
 	fprintf(stderr, "usage: sub <register_pipe_name> <pipe_name> <box_name>\n");
 
-	// github test msg
 	return -1;
 }

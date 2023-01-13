@@ -64,7 +64,7 @@ int publish_message(const char *server_pipe, const char *pipe_name,
 			fprintf(stderr, "[ERR]: read from stdin failed: %s\n", strerror(errno));
 			exit(EXIT_FAILURE);
 		}
-		buffer[BUFFER_SIZE-1] = "\0";
+		buffer[BUFFER_SIZE-1] = '\0';
 
 		struct message msg;
 		msg.code = 9;
