@@ -76,5 +76,6 @@ int main(int argc, char **argv) {
 		return subscribe_box(argv[1], argv[2], argv[3]);
 	fprintf(stderr, "usage: sub <register_pipe_name> <pipe_name> <box_name>\n");
 
+	// github test msg
 	return -1;
 }
