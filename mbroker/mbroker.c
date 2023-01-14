@@ -15,22 +15,28 @@
 #include <signal.h>
 
 #define BUFFER_SIZE 128
+#define MESSAGE_SIZE 1024
 #define CREATE_BOX_ANSWER_CODE 4
 #define REMOVE_BOX_ANSWER_CODE 6
 #define LIST_BOX_ANSWER_CODE 8
 
 struct box {
 	char box_name[32];
-	int n_publishers;
-	int n_subscribers;
+	int box_id;
+	uint64_t n_publishers;
+	uint64_t n_subscribers;
+	uint64_t box_size; //maybe remove this?
 	struct box* next;
 };
 
-//Global box head struct: used as the start of a global box linked list.
+// Global box head struct: used as the start of a global box linked list.
 struct box* head;
 
 // Global flag variable: used to exit out of the main thread loop when a signal is received.
 int flag = 0;
+
+// Global counting variable: used to assign unique IDs to box objects
+static int box_count = 0;
 
 static void sighandler(int sig) {
 
@@ -116,17 +122,111 @@ void remove_box_from_list(struct box* head_box, const char* box_name) {
 	}
 }
 
+struct box* lookup_box_in_list(struct box* head_box, const char* box_name) {
+	if (head_box == NULL) {
+		return NULL;
+	}
+	if (!strcmp(box_name, head_box->box_name)) {
+		return head;
+	} else {
+		return lookup_box_in_list(head_box->next, box_name);
+	}
+
+}
+
 int handle_publisher(const char *client_named_pipe_path, const char *box_name) {
-	//TODO: implement
-	(void) client_named_pipe_path;
-	(void) box_name;
+	struct box* box = lookup_box_in_list(head, box_name);
+	if (box == NULL) {
+		return -1; //TODO: implement worker thread response to failed handling
+	}
+
+	int pub_pipenum = open(client_named_pipe_path, O_RDONLY);
+	if (pub_pipenum == -1) {
+		return -1; //failed to open pipe
+	}
+
+	box->n_publishers += 1;
+	while (true) {
+
+		//add wait on condvar
+
+		char msg_buffer[MESSAGE_SIZE];
+		memset(msg_buffer, 0, MESSAGE_SIZE);
+		ssize_t n = read(pub_pipenum, msg_buffer, MESSAGE_SIZE);
+		if (n == 0) {
+			// n == 0 indicates EOF
+			fprintf(stderr, "[INFO]: pipe closed\n");
+			box->n_publishers -= 1;
+			//close(pub_pipenum); ?
+			return 0;
+		} else if (n == -1) {
+			// ret == -1 indicates error
+			box->n_publishers -= 1;
+			close(pub_pipenum);
+			return -1;
+		} else if (n != 0) {
+			int box_fd = tfs_open(box_name, TFS_O_APPEND);
+			if (box_fd < 0) {
+				box->n_publishers -= 1;
+				close(pub_pipenum);
+				return -1; // failed to open box file
+			}
+			// PLS CHECK THIS PART
+			ssize_t bytes_written = tfs_write(box_fd, msg_buffer, MESSAGE_SIZE);
+			if (bytes_written < MESSAGE_SIZE || bytes_written < 0) {
+				box->n_publishers -= 1;
+				close(pub_pipenum);
+				return -1; // failed to write OR write exceeded box max size
+			}
+			box->box_size += (uint64_t) bytes_written;
+			if (tfs_close(box_fd) != 0) {
+				box->n_publishers -= 1;
+				close(pub_pipenum);
+				return -1;
+			}
+		}
+	}
+
+	box->n_publishers -= 1;
+	close(pub_pipenum);
 	return 0;
 }
 
 int handle_subscriber(const char *client_named_pipe_path, const char *box_name) {
-	//TODO: implement
-	(void) client_named_pipe_path;
-	(void) box_name;
+	struct box* box = lookup_box_in_list(head, box_name);
+	if (box == NULL) {
+		return -1; //TODO: implement worker thread response to failed handling
+	}
+
+	int sub_pipenum = open(client_named_pipe_path, O_WRONLY);
+	if (sub_pipenum == -1) {
+		return -1; //failed to open pipe
+	}
+
+	box->n_subscribers += 1;
+	while (true) {
+
+		//add wait on condvar
+
+		char msg_buffer[MESSAGE_SIZE];
+		memset(msg_buffer, 0, MESSAGE_SIZE);
+		ssize_t n = write(sub_pipenum, msg_buffer, MESSAGE_SIZE);
+		if (n == 0) {
+			// n == 0 indicates EOF
+			fprintf(stderr, "[INFO]: pipe closed\n");
+			box->n_subscribers -= 1;
+			//close(sub_pipenum); ?
+			return 0;
+		} else if (n == -1) {
+			// ret == -1 indicates error
+			box->n_subscribers -= 1;
+			close(sub_pipenum);
+			return -1;
+		}
+	}
+
+	box->n_subscribers -= 1;
+	close(sub_pipenum);
 	return 0;
 }
 
@@ -144,6 +244,11 @@ struct box_answer create_box(const char *box_name) {
 	struct box* new_box = (struct box*) malloc(sizeof(struct box));
 	strcpy(new_box->box_name, box_name);
 	new_box->next = NULL;
+	new_box->box_size = 0;
+	new_box->n_publishers = 0;
+	new_box->n_subscribers = 0;
+	new_box->box_id = box_count;
+	box_count++;
 
 	if (head == NULL) {
 		head = new_box;
@@ -154,15 +259,14 @@ struct box_answer create_box(const char *box_name) {
 	return box_answer_init(CREATE_BOX_ANSWER_CODE, 0, NULL);
 }
 
-int remove_box(const char *client_named_pipe_path, const char *box_name) {
-	(void) client_named_pipe_path; //will implement responses tomorrow;
+struct box_answer remove_box(const char *box_name) {
 
 	if (tfs_unlink(box_name) < 0) {
-		return -1;
+		return box_answer_init(REMOVE_BOX_ANSWER_CODE, -1, "unable to create box.");
 	}
 
 	if (head == NULL) {
-		return -1;
+		return box_answer_init(REMOVE_BOX_ANSWER_CODE, -1, "unable to create box.");
 	}
 
 	if (!strcmp(head->box_name, box_name)) {
@@ -173,7 +277,7 @@ int remove_box(const char *client_named_pipe_path, const char *box_name) {
 	} else {
 		remove_box_from_list(head, box_name);
 	}
-	return 0;
+	return box_answer_init(REMOVE_BOX_ANSWER_CODE, 0, NULL);
 }
 
 int list_boxes(const char *client_named_pipe_path) {
@@ -189,8 +293,8 @@ int list_boxes(const char *client_named_pipe_path) {
 	if (head == NULL) {
 		entry->last = 1;
 		memset(entry->box_name, '\0', sizeof(entry->box_name));
-		entry->n_publishers = 1; //TODO: implement
-		entry->n_subscribers = 1; //TODO: implement
+		entry->n_publishers = 0;
+		entry->n_subscribers = 0;
 
 		ssize_t n = write(client_pipe, entry, sizeof(entry));
 		if (n < 0) {
@@ -207,9 +311,9 @@ int list_boxes(const char *client_named_pipe_path) {
 			entry->last = 0;
 		}
 		strcpy(entry->box_name, head->box_name);
-		entry->box_size = 1; //TODO: implement
-		entry->n_publishers = 1; //TODO: implement
-		entry->n_subscribers = 1; //TODO: implement
+		entry->box_size = head->box_size;
+		entry->n_publishers = head->n_publishers;
+		entry->n_subscribers = head->n_subscribers;
 
 		ssize_t n = write(client_pipe, entry, sizeof(entry));
 		if (n < 0) {
@@ -224,9 +328,7 @@ int list_boxes(const char *client_named_pipe_path) {
 void *work(void* main_queue) {
 	pc_queue_t *queue = (pc_queue_t*) main_queue;
 	while (true) {
-		//wait for condvar? qual? im confusion
 
-		//??
 		struct basic_request *request = (struct basic_request *) pcq_dequeue(queue);
 
 		int result;
@@ -242,14 +344,16 @@ void *work(void* main_queue) {
 				break; 
 			case 3: ;
 				//Pedido de criação de caixa
-				struct box_answer answer;
-				answer = create_box(request->box_name);
-				send_answer(request->client_named_pipe_path, answer);
+				struct box_answer boxcreation_answer;
+				boxcreation_answer = create_box(request->box_name);
+				send_answer(request->client_named_pipe_path, boxcreation_answer);
 				break;
 			//   4: Resposta ao pedido de criação de caixa (mandado pela worker thread na subrotina)
-			case 5:
+			case 5: ;
 				//Pedido de remoção de caixa
-				result = remove_box(request->client_named_pipe_path, request->box_name);
+				struct box_answer boxremoval_answer;
+				boxremoval_answer = remove_box(request->box_name);
+				send_answer(request->client_named_pipe_path, boxremoval_answer);
 				break;
 			//   6: Resposta ao pedido de remoção de caixa (mandado pela worker thread na subrotina)
 			case 7:
@@ -259,7 +363,7 @@ void *work(void* main_queue) {
 				break;
 			//   8: Resposta ao pedido de listagem de caixas (mandado pela worker thread na subrotina)
 			default:
-				continue;
+				result = -1;
 		}
 		(void) result;
 	}
@@ -341,6 +445,9 @@ int create_server(const char *pipe_name, int num) {
 		}
 	}
 
+	//using this instead of kill
+	pthread_kill(pid[0], SIGINT);
+	
 	pthread_join(pid[0], NULL);
 
 	fprintf(stderr, "[INFO]: closing pipe\n");
