@@ -7,6 +7,8 @@
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/types.h>
+#include <sys/stat.h>
 
 #define CREATE_BOX_REQUEST_CODE 3
 #define REMOVE_BOX_REQUEST_CODE 5
@@ -21,6 +23,21 @@ static void print_usage() {
 			"   manager <register_pipe_name> <pipe_name> create <box_name>\n"
 			"   manager <register_pipe_name> <pipe_name> remove <box_name>\n"
 			"   manager <register_pipe_name> <pipe_name> list\n");
+}
+
+int new_pipe(const char *pipe_name) {
+	// FIXME: se já existir pipe com este nome, algo tem de acontecer
+	// (e não é isto)
+	if (unlink(pipe_name) != 0 && errno != ENOENT) {
+		return -1; // failed to unlink file
+	}
+
+	if (mkfifo(pipe_name, 0640) != 0) {
+		unlink(pipe_name);
+		return -1; // failed to create pipe
+	}
+
+	return 0;
 }
 
 int send_request(const char *server_pipe, struct basic_request request) {
@@ -56,13 +73,13 @@ int list_boxes(const char *server_pipe, const char *pipe_name) {
 		return -1;
 	}
 
-	// TODO: mete signal maybe?? idk isto n é eficiente
-	// se ele n criar nada por dar erro, isto n funciona
-	while (access(pipe_name, F_OK) == -1) { /* nothing happens */
+	if (new_pipe(pipe_name) == -1) {
+		return -1;
 	}
 
 	int pipenum = open(pipe_name, O_RDONLY);
 	if (pipenum == -1) {
+		unlink(pipe_name);
 		return -1; // failed to open pipe
 	}
 
@@ -86,6 +103,7 @@ int list_boxes(const char *server_pipe, const char *pipe_name) {
 	} while (buffer.last != 1);
 
 	close(pipenum);
+	unlink(pipe_name);
 	return 0;
 }
 
@@ -106,13 +124,13 @@ int create_box(const char *server_pipe, const char *pipe_name,
 		return -1;
 	}
 
-	// TODO: mete signal maybe?? idk isto n é eficiente
-	// se ele n criar nada por dar erro, isto n funciona
-	while (access(pipe_name, F_OK) == -1) { /* nothing happens */
+	if (new_pipe(pipe_name) == -1) {
+		return -1;
 	}
 
 	int pipenum = open(pipe_name, O_RDONLY);
 	if (pipenum == -1) {
+		unlink(pipe_name);
 		return -1; // failed to open pipe
 	}
 
@@ -126,7 +144,7 @@ int create_box(const char *server_pipe, const char *pipe_name,
 			// ret == -1 indicates error
 			break;
 		} else if (n != 0) {
-			printf("REQUEST: %i\nRETURN CODE: %s\nERROR: %s\n", buffer.code,
+			printf("REQUEST: %i\nRETURN CODE: %d\nERROR: %s\n", buffer.code,
 				   buffer.return_code, buffer.error_message);
 			if (buffer.return_code == 0)
 				fprintf(stdout, "OK\n");
@@ -136,6 +154,7 @@ int create_box(const char *server_pipe, const char *pipe_name,
 	}
 
 	close(pipenum);
+	unlink(pipe_name);
 	return 0;
 }
 
@@ -156,13 +175,13 @@ int remove_box(const char *server_pipe, const char *pipe_name,
 		return -1;
 	}
 
-	// TODO: mete signal maybe?? idk isto n é eficiente
-	// se ele n criar nada por dar erro, isto n funciona
-	while (access(pipe_name, F_OK) == -1) { /* nothing happens */
+	if (new_pipe(pipe_name) == -1) {
+		return -1;
 	}
 
 	int pipenum = open(pipe_name, O_RDONLY);
 	if (pipenum == -1) {
+		unlink(pipe_name);
 		return -1; // failed to open pipe
 	}
 
@@ -176,7 +195,7 @@ int remove_box(const char *server_pipe, const char *pipe_name,
 			// ret == -1 indicates error
 			break;
 		} else if (n != 0) {
-			printf("REQUEST: %i\nRETURN CODE: %s\nERROR: %s\n", buffer.code,
+			printf("REQUEST: %i\nRETURN CODE: %d\nERROR: %s\n", buffer.code,
 				   buffer.return_code, buffer.error_message);
 			if (buffer.return_code == 0)
 				fprintf(stdout, "OK\n");
@@ -186,6 +205,7 @@ int remove_box(const char *server_pipe, const char *pipe_name,
 	}
 
 	close(pipenum);
+	unlink(pipe_name);
 	return 0;
 }
 

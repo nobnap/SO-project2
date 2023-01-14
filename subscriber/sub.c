@@ -7,6 +7,8 @@
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/types.h>
+#include <sys/stat.h>
 
 #define BUFFER_SIZE 128
 
@@ -16,18 +18,22 @@ void handle() {
 	exit(EXIT_SUCCESS);
 }
 
-int subscribe_box(const char *server_pipe, const char *pipe_name,
-				  const char *box_name) {
-	struct basic_request request;
-	request.code = 2;
-	strcpy(request.client_named_pipe_path, pipe_name);
-	strcpy(request.box_name, box_name);
+int new_pipe(const char *pipe_name) {
+	// FIXME: se já existir pipe com este nome, algo tem de acontecer
+	// (e não é isto)
+	if (unlink(pipe_name) != 0 && errno != ENOENT) {
+		return -1; // failed to unlink file
+	}
 
-	fprintf(stderr, "subscribing to box...\nPIPE_NAME: %s\nBOX_NAME: %s\n",
-			request.client_named_pipe_path, request.box_name);
+	if (mkfifo(pipe_name, 0640) != 0) {
+		unlink(pipe_name);
+		return -1; // failed to create pipe
+	}
 
-	signal(SIGINT, handle);
+	return 0;
+}
 
+int send_request(const char *server_pipe, struct basic_request request) {
 	int server = open(server_pipe, O_WRONLY);
 	if (server == -1) {
 		return -1; // failed to open pipe
@@ -42,11 +48,32 @@ int subscribe_box(const char *server_pipe, const char *pipe_name,
 	close(server);
 
 	printf("REQUEST SENT\n");
+	return 0;
+}
 
-	while (access(pipe_name, F_OK) == -1) { /* nothing happens */ }
+int subscribe_box(const char *server_pipe, const char *pipe_name,
+				  const char *box_name) {
+	struct basic_request request;
+	request.code = 2;
+	strcpy(request.client_named_pipe_path, pipe_name);
+	strcpy(request.box_name, box_name);
+
+	fprintf(stderr, "subscribing to box...\nPIPE_NAME: %s\nBOX_NAME: %s\n",
+			request.client_named_pipe_path, request.box_name);
+
+	signal(SIGINT, handle);
+
+	if (send_request(server_pipe, request) == -1) {
+		return -1;
+	}
+
+	if (new_pipe(pipe_name) == -1) {
+		return -1;
+	}
 
 	int pipenum = open(pipe_name, O_RDONLY);
 	if (pipenum == -1) {
+		unlink(pipe_name);
 		return -1; // failed to open pipe
 	}
 
@@ -68,7 +95,7 @@ int subscribe_box(const char *server_pipe, const char *pipe_name,
 	}
 
 	close(pipenum);
-
+	unlink(pipe_name);
 	return 0;
 }
 
