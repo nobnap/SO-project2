@@ -14,9 +14,14 @@
 #include "operations.h"
 
 #define BUFFER_SIZE 128
+#define CREATE_BOX_ANSWER_CODE 4
+#define REMOVE_BOX_ANSWER_CODE 6
+#define LIST_BOX_ANSWER_CODE 8
 
 struct box {
-	char* box_name;
+	char box_name[32];
+	int n_publishers;
+	int n_subscribers;
 	struct box* next;
 };
 
@@ -36,6 +41,33 @@ void send_msg(int tx) {
 
 		written += ret;
 	}
+}
+
+int send_answer(const char *client_named_pipe_path, struct box_answer answer) {
+	int pipenum = open(client_named_pipe_path, O_WRONLY);
+	if (pipenum == -1) {
+		return -1; // failed to open pipe
+	}
+
+	ssize_t n = write(pipenum, &answer, sizeof(struct box_answer));
+	if (n == -1) {
+		close(pipenum);
+		return -1;
+	}
+
+	close(pipenum);
+	return 0;
+}
+
+struct box_answer box_answer_init(uint8_t code, int32_t return_code, char *error_message) {
+	struct box_answer answer;
+	answer.code = code;
+	answer.return_code = return_code;
+	memset(answer.error_message, 0, sizeof(answer.error_message));
+	if (error_message != NULL) {
+		strcpy(answer.error_message, error_message);
+	}
+	return answer;
 }
 
 void add_box_to_list(struct box* head_box, struct box* new_box) {
@@ -74,12 +106,15 @@ int handle_subscriber(const char *client_named_pipe_path, const char *box_name) 
 	return 0;
 }
 
-int create_box(const char *client_named_pipe_path, const char *box_name) {
-	(void) client_named_pipe_path; //will implement responses tomorrow;
-
-	int box_fd = tfs_open(box_name, O_CREAT);
-	if (box_fd < 0) {
-		return -1;
+struct box_answer create_box(const char *box_name) {
+	// FIXME: garantir que se só se cria se a box não existir(se já existir deve falhar)
+	size_t n = strlen(box_name)+2;
+	char name[n];
+	sprintf(name, "/%s", box_name);
+	
+	int box_fd = tfs_open(name, TFS_O_CREAT);
+	if (box_fd == -1) {
+		return box_answer_init(CREATE_BOX_ANSWER_CODE, -1, "unable to create box.");
 	}
 
 	struct box* new_box = (struct box*) malloc(sizeof(struct box));
@@ -92,7 +127,7 @@ int create_box(const char *client_named_pipe_path, const char *box_name) {
 		add_box_to_list(head, new_box);
 	}
 
-	return 0;
+	return box_answer_init(CREATE_BOX_ANSWER_CODE, 0, NULL);
 }
 
 int remove_box(const char *client_named_pipe_path, const char *box_name) {
@@ -181,10 +216,11 @@ void *work(void* main_queue) {
 			case 2:
 				//Pedido de registo de subscriber
 				result = handle_subscriber(request->client_named_pipe_path, request->box_name);
-				break;
+				break; 
 			case 3:
 				//Pedido de criação de caixa
-				result = create_box(request->client_named_pipe_path, request->box_name);
+				struct box_answer answer = create_box(request->box_name);
+				send_answer(request->client_named_pipe_path, answer);
 				break;
 			//   4: Resposta ao pedido de criação de caixa (mandado pela worker thread na subrotina)
 			case 5:
@@ -195,13 +231,15 @@ void *work(void* main_queue) {
 			case 7:
 				//Pedido de listagem de caixas
 				result = list_boxes(request->client_named_pipe_path);
+
 				break;
 			//   8: Resposta ao pedido de listagem de caixas (mandado pela worker thread na subrotina)
 			default:
-				break;
+				continue;
 		}
-		(void) result; //will handle this later
+		(void) result;
 	}
+	return NULL;
 }
 
 int new_pipe(const char *pipe_name) {
@@ -221,13 +259,6 @@ int new_pipe(const char *pipe_name) {
 	}
 
 	return pipenum;
-
-	//send_msg(pipenum);
-
-	//fprintf(stderr, "[INFO]: closing pipe\n");
-	//close(pipenum);
-	//unlink(pipe_name);
-	//return 0;
 }
 
 int create_server(const char *pipe_name, int num) {
@@ -260,6 +291,7 @@ int create_server(const char *pipe_name, int num) {
 	pthread_t pid[num];
 	// for testing purposes, I only want to create a single thread
 	if (pthread_create(&pid[0], NULL, work, (void *)&queue) < 0) {
+		tfs_destroy();
 		close(pipenum);
 		unlink(pipe_name);
 		fprintf(stderr, "failed to create thread: %s\n", strerror(errno));
@@ -269,22 +301,22 @@ int create_server(const char *pipe_name, int num) {
 	head = NULL;
 
 	while (true) {
-		struct basic_request buffer;
-		ssize_t n = read(pipenum, &buffer, sizeof(buffer));
-		if (n == 0) {
-			// ret == 0 indicates EOF
-			break;
-		} else if (n == -1) {
+		struct basic_request* buffer = (struct basic_request*)malloc(sizeof(struct basic_request));
+		ssize_t n = read(pipenum, buffer, sizeof(struct basic_request));
+		if (n == -1) {
 			// ret == -1 indicates error
 			break;
 		} else if (n != 0) {
-			printf("REQUEST: %i\nPIPE: %s\nBOX: %s\n", buffer.code, buffer.client_named_pipe_path, buffer.box_name);
-			int request_pipe = new_pipe(buffer.client_named_pipe_path);
-			(void) request_pipe; //what
+			printf("REQUEST: %i\nPIPE: %s\nBOX: %s\n", buffer->code, buffer->client_named_pipe_path, buffer->box_name);
+			pcq_enqueue(&queue, (void *)buffer);
+			break;
 		}
 	}
 
+	pthread_join(pid[0], NULL);
+
 	fprintf(stderr, "[INFO]: closing pipe\n");
+	tfs_destroy();
 	close(pipenum);
 	unlink(pipe_name);
 	fprintf(stderr, "[INFO]: server was deleted\n");

@@ -86,10 +86,7 @@ int list_boxes(const char *server_pipe, const char *pipe_name) {
 	struct box_list_entry buffer;
 	do {
 		ssize_t n = read(pipenum, &buffer, sizeof(buffer));
-		if (n == 0) {
-			// ret == 0 indicates EOF
-			break;
-		} else if (n == -1) {
+		if (n == -1) {
 			// ret == -1 indicates error
 			break;
 		} else if (n != 0) {
@@ -137,10 +134,7 @@ int create_box(const char *server_pipe, const char *pipe_name,
 	while (true) {
 		struct box_answer buffer;
 		ssize_t n = read(pipenum, &buffer, sizeof(buffer));
-		if (n == 0) {
-			// ret == 0 indicates EOF
-			break;
-		} else if (n == -1) {
+		if (n == -1) {
 			// ret == -1 indicates error
 			break;
 		} else if (n != 0) {
@@ -150,6 +144,7 @@ int create_box(const char *server_pipe, const char *pipe_name,
 				fprintf(stdout, "OK\n");
 			else
 				fprintf(stdout, "ERROR %s\n", buffer.error_message);
+			break;
 		}
 	}
 
