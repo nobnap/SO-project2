@@ -38,46 +38,52 @@ void send_msg(int tx) {
 	}
 }
 
-void add_box_to_list(struct box* head, struct box* new_box) {
-	if (head->next == NULL) {
-		head->next = new_box;
+void add_box_to_list(struct box* head_box, struct box* new_box) {
+	if (head_box->next == NULL) {
+		head_box->next = new_box;
 		return;
 	} else {
-		return add_box(head->next, new_box);
+		return add_box_to_list(head_box->next, new_box);
 	}
 }
 
-void remove_box_from_list(struct box* head, const char* box_name) {
-	if (head->next == NULL) return;
-	if (!strcmp(head->next->box_name, box_name)) {
-		struct box* temp = head->next;
-		head->next = temp->next;
+void remove_box_from_list(struct box* head_box, const char* box_name) {
+	if (head_box->next == NULL) return;
+	if (!strcmp(head_box->next->box_name, box_name)) {
+		struct box* temp = head_box->next;
+		head_box->next = temp->next;
 		free(temp->box_name);
 		free(temp);
 		return;
 	} else {
-		return remove_box(head->next, box_name);
+		return remove_box_from_list(head_box->next, box_name);
 	}
 }
 
 int handle_publisher(const char *client_named_pipe_path, const char *box_name) {
 	//TODO: implement
+	(void) client_named_pipe_path;
+	(void) box_name;
 	return 0;
 }
 
 int handle_subscriber(const char *client_named_pipe_path, const char *box_name) {
 	//TODO: implement
+	(void) client_named_pipe_path;
+	(void) box_name;
 	return 0;
 }
 
 int create_box(const char *client_named_pipe_path, const char *box_name) {
+	(void) client_named_pipe_path; //will implement responses tomorrow;
+
 	int box_fd = tfs_open(box_name, O_CREAT);
 	if (box_fd < 0) {
 		return -1;
 	}
 
 	struct box* new_box = (struct box*) malloc(sizeof(struct box));
-	new_box->box_name = box_name;
+	strcpy(new_box->box_name, box_name);
 	new_box->next = NULL;
 
 	if (head == NULL) {
@@ -90,6 +96,8 @@ int create_box(const char *client_named_pipe_path, const char *box_name) {
 }
 
 int remove_box(const char *client_named_pipe_path, const char *box_name) {
+	(void) client_named_pipe_path; //will implement responses tomorrow;
+
 	if (tfs_unlink(box_name) < 0) {
 		return -1;
 	}
@@ -110,7 +118,11 @@ int remove_box(const char *client_named_pipe_path, const char *box_name) {
 }
 
 int list_boxes(const char *client_named_pipe_path) {
-	int client = open(&client_named_pipe_path, O_WRONLY);
+
+	int client_pipe = open(client_named_pipe_path, O_WRONLY);
+	if (client_pipe < 0) {
+		return -1;
+	}
 
 	if (head == NULL) {
 		struct box_list_entry ble;
@@ -120,21 +132,12 @@ int list_boxes(const char *client_named_pipe_path) {
 		ble.n_publishers = 1; //TODO: implement
 		ble.n_subscribers = 1; //TODO: implement
 
-		int response_pipe = open(client_named_pipe_path, O_WRONLY);
-		if (response_pipe < 0) {
-			return -1;
-		}
-
-		ssize_t n = write(response_pipe, &ble, sizeof(ble));
+		ssize_t n = write(client_pipe, &ble, sizeof(ble));
 		if (n < 0) {
+			close(client_pipe);
 			return -1;
 		}
 		return 0;
-	}
-
-	int response_pipe = open(client_named_pipe_path, O_WRONLY);
-	if (response_pipe < 0) {
-		return -1;
 	}	
 	
 	for(; head != NULL; head = head->next) {
@@ -150,26 +153,23 @@ int list_boxes(const char *client_named_pipe_path) {
 		ble.n_publishers = 1; //TODO: implement
 		ble.n_subscribers = 1; //TODO: implement
 
-		int response_pipe = open(client_named_pipe_path, O_WRONLY);
-		if (response_pipe < 0) {
-			return -1;
-		}
-
-		ssize_t n = write(response_pipe, &ble, sizeof(ble));
+		ssize_t n = write(client_pipe, &ble, sizeof(ble));
 		if (n < 0) {
+			close(client_pipe);
 			return -1;
 		}
 	}
-	close(response_pipe);
+	close(client_pipe);
 	return 0;
 }
 
-void work(pc_queue_t main_queue) {
+void *work(void* main_queue) {
+	pc_queue_t *queue = (pc_queue_t*) main_queue;
 	while (true) {
 		//wait for condvar? qual? im confusion
 
 		//??
-		struct basic_request *request = (struct basic_request *) pcq_dequeue(&main_queue);
+		struct basic_request *request = (struct basic_request *) pcq_dequeue(queue);
 
 		int result;
 
@@ -197,9 +197,10 @@ void work(pc_queue_t main_queue) {
 				result = list_boxes(request->client_named_pipe_path);
 				break;
 			//   8: Resposta ao pedido de listagem de caixas (mandado pela worker thread na subrotina)
-			default:0
-				//???
+			default:
+				break;
 		}
+		(void) result; //will handle this later
 	}
 }
 
@@ -254,11 +255,11 @@ int create_server(const char *pipe_name, int num) {
 	}
 
 	pc_queue_t queue;
-	pcq_create(&queue, num); //change num to a different constant?
+	pcq_create(&queue, (size_t) num); //change num to a different constant?
 
 	pthread_t pid[num];
 	// for testing purposes, I only want to create a single thread
-	if (pthread_create(&pid[0], NULL, work, &queue) < 0) {
+	if (pthread_create(&pid[0], NULL, work, (void *)&queue) < 0) {
 		close(pipenum);
 		unlink(pipe_name);
 		fprintf(stderr, "failed to create thread: %s\n", strerror(errno));
@@ -279,6 +280,7 @@ int create_server(const char *pipe_name, int num) {
 		} else if (n != 0) {
 			printf("REQUEST: %i\nPIPE: %s\nBOX: %s\n", buffer.code, buffer.client_named_pipe_path, buffer.box_name);
 			int request_pipe = new_pipe(buffer.client_named_pipe_path);
+			(void) request_pipe; //what
 		}
 	}
 
