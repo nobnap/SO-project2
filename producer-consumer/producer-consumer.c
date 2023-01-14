@@ -1,4 +1,5 @@
 #include "producer-consumer.h"
+#include <stdlib.h>
 
 // pcq_create: create a queue, with a given (fixed) capacity
 //
