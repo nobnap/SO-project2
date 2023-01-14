@@ -80,7 +80,7 @@ int subscribe_box(const char *server_pipe, const char *pipe_name,
 	while (true) {
 		char buffer[BUFFER_SIZE];
 		memset(buffer, 0, BUFFER_SIZE);
-		ssize_t n = read(pipenum, buffer, BUFFER_SIZE - 1);
+		ssize_t n = read(pipenum, buffer, BUFFER_SIZE - 1); //why -1? the \0 is already added by the publisher...
 		if (n == 0) {
 			// ret == 0 indicates EOF
 			fprintf(stderr, "[INFO]: pipe closed\n");
@@ -89,7 +89,7 @@ int subscribe_box(const char *server_pipe, const char *pipe_name,
 			// ret == -1 indicates error
 			return -1;
 		} else if (n != 0) {
-			buffer[n] = 0;
+			buffer[n] = 0; //why -1? the \0 is already added by the publisher...
 			fprintf(stdout, "%s\n", buffer);
 		}
 	}
