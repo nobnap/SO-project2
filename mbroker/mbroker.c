@@ -12,6 +12,7 @@
 #include "producer-consumer.h"
 #include "protocol.h"
 #include "operations.h"
+#include <signal.h>
 
 #define BUFFER_SIZE 128
 #define CREATE_BOX_ANSWER_CODE 4
@@ -25,7 +26,30 @@ struct box {
 	struct box* next;
 };
 
+//Global box head struct: used as the start of a global box linked list.
 struct box* head;
+
+// Global flag variable: used to exit out of the main thread loop when a signal is received.
+int flag = 0;
+
+static void sighandler(int sig) {
+
+  if (sig == SIGINT) {
+    // In some systems, after the handler call the signal gets reverted
+    // to SIG_DFL (the default action associated with the signal).
+    // So we set the signal handler back to our function after each trap.
+    //
+    if (signal(SIGINT, sighandler) == SIG_ERR)
+      exit(EXIT_FAILURE);
+    
+	flag = 1;
+    return; // Resume execution at point of interruption
+  }
+
+  //Caught SIGQUIT - should we send a proper message?
+  exit(EXIT_SUCCESS);
+
+}
 
 void send_msg(int tx) {
 	char const *str = "WOW, A MESSAGE";
@@ -159,15 +183,16 @@ int list_boxes(const char *client_named_pipe_path) {
 		return -1;
 	}
 
-	if (head == NULL) {
-		struct box_list_entry ble;
-		ble.code = 8;
-		ble.last = 1;
-		memset(ble.box_name, '\0', sizeof(ble.box_name));
-		ble.n_publishers = 1; //TODO: implement
-		ble.n_subscribers = 1; //TODO: implement
+	struct box_list_entry *entry = (struct box_list_entry*) malloc(sizeof(struct box_list_entry));
+	entry->code = LIST_BOX_ANSWER_CODE;
 
-		ssize_t n = write(client_pipe, &ble, sizeof(ble));
+	if (head == NULL) {
+		entry->last = 1;
+		memset(entry->box_name, '\0', sizeof(entry->box_name));
+		entry->n_publishers = 1; //TODO: implement
+		entry->n_subscribers = 1; //TODO: implement
+
+		ssize_t n = write(client_pipe, entry, sizeof(entry));
 		if (n < 0) {
 			close(client_pipe);
 			return -1;
@@ -176,19 +201,17 @@ int list_boxes(const char *client_named_pipe_path) {
 	}	
 	
 	for(; head != NULL; head = head->next) {
-		struct box_list_entry ble;
-		ble.code = 8;
 		if (head->next == NULL) {
-			ble.last = 1;
+			entry->last = 1;
 		} else {
-			ble.last = 0;
+			entry->last = 0;
 		}
-		strcpy(ble.box_name, head->box_name);
-		ble.box_size = 1; //TODO: implement
-		ble.n_publishers = 1; //TODO: implement
-		ble.n_subscribers = 1; //TODO: implement
+		strcpy(entry->box_name, head->box_name);
+		entry->box_size = 1; //TODO: implement
+		entry->n_publishers = 1; //TODO: implement
+		entry->n_subscribers = 1; //TODO: implement
 
-		ssize_t n = write(client_pipe, &ble, sizeof(ble));
+		ssize_t n = write(client_pipe, entry, sizeof(entry));
 		if (n < 0) {
 			close(client_pipe);
 			return -1;
@@ -217,9 +240,10 @@ void *work(void* main_queue) {
 				//Pedido de registo de subscriber
 				result = handle_subscriber(request->client_named_pipe_path, request->box_name);
 				break; 
-			case 3:
+			case 3: ;
 				//Pedido de criação de caixa
-				struct box_answer answer = create_box(request->box_name);
+				struct box_answer answer;
+				answer = create_box(request->box_name);
 				send_answer(request->client_named_pipe_path, answer);
 				break;
 			//   4: Resposta ao pedido de criação de caixa (mandado pela worker thread na subrotina)
@@ -285,6 +309,9 @@ int create_server(const char *pipe_name, int num) {
 		exit(EXIT_FAILURE);
 	}
 
+	signal(SIGINT, sighandler);
+	signal(SIGPIPE, SIG_IGN);
+
 	pc_queue_t queue;
 	pcq_create(&queue, (size_t) num); //change num to a different constant?
 
@@ -300,7 +327,8 @@ int create_server(const char *pipe_name, int num) {
 
 	head = NULL;
 
-	while (true) {
+	// flag switches to 1 when the thread receives SIGINT
+	while (flag == 0) {
 		struct basic_request* buffer = (struct basic_request*)malloc(sizeof(struct basic_request));
 		ssize_t n = read(pipenum, buffer, sizeof(struct basic_request));
 		if (n == -1) {
