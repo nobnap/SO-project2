@@ -59,7 +59,7 @@ int publish_message(const char *server_pipe, const char *pipe_name,
 		// neste momento, só truncamos e acabou
 		char buffer[BUFFER_SIZE];
 		memset(buffer, 0, BUFFER_SIZE);
-		ssize_t input = read(STDIN_FILENO, buffer, BUFFER_SIZE -1);
+		ssize_t input = read(STDIN_FILENO, buffer, BUFFER_SIZE - 1);
 		if (input < 0) {
 			fprintf(stderr, "[ERR]: read from stdin failed: %s\n", strerror(errno));
 			exit(EXIT_FAILURE);
