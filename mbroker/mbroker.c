@@ -222,36 +222,31 @@ int handle_subscriber(const char *client_named_pipe_path, const char *box_name) 
 		return -1; //failed to open pipe
 	}
 
+	int box_fd = tfs_open(box_name, 0b000);
+	if (box_fd < 0) {
+		close(sub_pipenum);
+		return -1; // failed to open file
+	}
+
+	char msg_buffer[MESSAGE_SIZE];
+
 	box->n_subscribers += 1;
+
 	while (true) {
 
-		int to_read = box->box_size; //TODO: fix the wait condition
-
 		pthread_mutex_lock(&box_lock[box->box_id]);
-		
-		while(to_read == 0) { //TODO: fix the wait condition
-			pthread_cond_wait(&box_condvar[box->box_id], &box_lock[box->box_id]);
-		}
 
-		// Reading from box file
-		char msg_buffer[MESSAGE_SIZE];
 		memset(msg_buffer, 0, MESSAGE_SIZE);
-		int box_fd = tfs_open(box_name, TFS_O_APPEND);
-		if (box_fd < 0) {
-			box->n_subscribers -= 1;
-			close(sub_pipenum);
-			pthread_mutex_unlock(&box_lock[box->box_id]);
-			return -1; // failed to open box file
-		}
-		ssize_t bytes_read = tfs_read(box_fd, msg_buffer, MESSAGE_SIZE);
+		ssize_t bytes_read = tfs_read(box_fd, msg_buffer, MESSAGE_SIZE); 
 		if (bytes_read < 0) {
 			box->n_subscribers -= 1;
 			close(sub_pipenum);
 			pthread_mutex_unlock(&box_lock[box->box_id]);
-			return -1; // failed to read from file
+			return -1; // error on reading from box
+		} 
+		while(bytes_read == 0) {
+			pthread_cond_wait(&box_condvar[box->box_id], &box_lock[box->box_id]);
 		}
-
-		to_read -= bytes_read; //TODO: fix the wait condition
 
 		if (tfs_close(box_fd) != 0) {
 			box->n_subscribers -= 1;
@@ -259,6 +254,7 @@ int handle_subscriber(const char *client_named_pipe_path, const char *box_name) 
 			pthread_mutex_unlock(&box_lock[box->box_id]);
 			return -1; // failed to close box file
 		}
+
 		pthread_mutex_unlock(&box_lock[box->box_id]);
 
 		// Sending read results to subscriber thread through pipe
@@ -276,6 +272,8 @@ int handle_subscriber(const char *client_named_pipe_path, const char *box_name) 
 			close(sub_pipenum);
 			return -1;
 		}
+
+
 	}
 
 	box->n_subscribers -= 1;
