@@ -65,7 +65,7 @@ int publish_message(const char *server_pipe, const char *pipe_name,
 	fprintf(stderr, "subscribing to box...\nPIPE_NAME: %s\nBOX_NAME: %s\n",
 			request.client_named_pipe_path, request.box_name);
 
-	signal(SIGINT, handle);
+	signal(SIGPIPE, handle);
 
 	if (send_request(server_pipe, request) == -1) {
 		return -1;
