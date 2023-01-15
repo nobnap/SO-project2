@@ -66,6 +66,7 @@ int publish_message(const char *server_pipe, const char *pipe_name,
 			request.client_named_pipe_path, request.box_name);
 
 	signal(SIGPIPE, handle);
+	signal(SIGINT, handle);
 
 	if (send_request(server_pipe, request) == -1) {
 		return -1;

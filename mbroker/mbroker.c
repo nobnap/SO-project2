@@ -170,9 +170,9 @@ int handle_publisher(const char *client_named_pipe_path, const char *box_name) {
 		// do i even need to add a wait on condvar here? read func should auto block the thread hopefully
 
 		// Reading published message from session fifo
-		char msg_buffer[MESSAGE_SIZE];
-		memset(msg_buffer, 0, MESSAGE_SIZE);
-		ssize_t n = read(pub_pipenum, msg_buffer, MESSAGE_SIZE);
+		//char msg_buffer[MESSAGE_SIZE];
+		struct message msg;
+		ssize_t n = read(pub_pipenum, &msg, sizeof(struct message));
 		if (n == 0) {
 			// n == 0 indicates EOF
 			fprintf(stderr, "[INFO]: pipe closed\n");
@@ -185,7 +185,8 @@ int handle_publisher(const char *client_named_pipe_path, const char *box_name) {
 			close(pub_pipenum);
 			return -1;
 		} else if (n != 0) {
-
+			int len = strlen(msg.message);
+			msg.message[len] = '\n';	
 			// Writing in box file
 			pthread_mutex_lock(&box->box_lock);
 			int box_fd = tfs_open(box_name, TFS_O_APPEND);
@@ -196,7 +197,7 @@ int handle_publisher(const char *client_named_pipe_path, const char *box_name) {
 				return -1; // failed to open box file
 			}
 			// PLS CHECK THIS PART
-			ssize_t bytes_written = tfs_write(box_fd, msg_buffer, MESSAGE_SIZE);
+			ssize_t bytes_written = tfs_write(box_fd, msg.message, len+1);
 			if (bytes_written < MESSAGE_SIZE || bytes_written < 0) {
 				box->n_publishers -= 1;
 				close(pub_pipenum);
