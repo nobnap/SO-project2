@@ -29,4 +29,15 @@ struct __attribute__((__packed__)) box_list_entry {
 	uint64_t n_subscribers;
 };
 
+struct basic_request basic_request_init(uint8_t code, char const *pipe_path,
+										char const *box_name);
+struct message message_init(uint8_t code, char const *message);
+struct box_answer box_answer_init(uint8_t code, int32_t return_code,
+								  char const *error_message);
+struct box_list_entry box_list_entry_init(uint8_t code, uint8_t last,
+										  char const *box_name,
+										  uint64_t box_size,
+										  uint64_t n_publishers,
+										  uint64_t n_subscribers);
+
 #endif

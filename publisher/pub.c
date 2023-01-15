@@ -6,11 +6,13 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
-#include <unistd.h>
-#include <sys/types.h>
 #include <sys/stat.h>
+#include <sys/types.h>
+#include <unistd.h>
 
 #define BUFFER_SIZE 1024
+#define PUBLISHER_REGISTER_CODE 1
+#define PUBLISHER_MESSAGE_CODE 9
 
 int pipenum = -1;
 
@@ -55,12 +57,10 @@ int send_request(const char *server_pipe, struct basic_request request) {
 	return 0;
 }
 
-int publish_message(const char *server_pipe, const char *pipe_name, 
+int publish_message(const char *server_pipe, const char *pipe_name,
 					const char *box_name) {
-	struct basic_request request;
-	request.code = 1;
-	strcpy(request.client_named_pipe_path, pipe_name);
-	strcpy(request.box_name, box_name);
+	struct basic_request request =
+		basic_request_init(PUBLISHER_REGISTER_CODE, pipe_name, box_name);
 
 	fprintf(stderr, "subscribing to box...\nPIPE_NAME: %s\nBOX_NAME: %s\n",
 			request.client_named_pipe_path, request.box_name);
@@ -86,23 +86,20 @@ int publish_message(const char *server_pipe, const char *pipe_name,
 		char buffer[BUFFER_SIZE];
 		memset(buffer, 0, BUFFER_SIZE);
 
-		while(fgets(buffer, BUFFER_SIZE, stdin) != NULL) {
-			buffer[BUFFER_SIZE-1] = '\0';
-			struct message msg;
-			msg.code = 9;
-			strcpy(msg.message, buffer);
+		while (fgets(buffer, BUFFER_SIZE - 1, stdin) != NULL) {
+			buffer[BUFFER_SIZE - 1] = '\0'; // FIXME: buffer sizes
+			struct message msg = message_init(PUBLISHER_MESSAGE_CODE, buffer);
 
 			ssize_t n = write(pipenum, &msg, sizeof(msg));
 			if (n < 0) {
 				close(pipenum);
 				unlink(pipe_name);
 				return -1;
-			}	
-
+			}
 		}
 	}
 
-	//desnecessario?
+	// desnecessario?
 	close(pipenum);
 	unlink(pipe_name);
 	return 0;

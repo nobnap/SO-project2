@@ -12,6 +12,8 @@
 
 #define BUFFER_SIZE 128
 
+#define SUBSCRIBER_REGISTER_CODE 2
+
 int pipenum = -1;
 
 void handle() {
@@ -57,10 +59,7 @@ int send_request(const char *server_pipe, struct basic_request request) {
 
 int subscribe_box(const char *server_pipe, const char *pipe_name,
 				  const char *box_name) {
-	struct basic_request request;
-	request.code = 2;
-	strcpy(request.client_named_pipe_path, pipe_name);
-	strcpy(request.box_name, box_name);
+	struct basic_request request = basic_request_init(SUBSCRIBER_REGISTER_CODE, pipe_name, box_name);
 
 	fprintf(stderr, "subscribing to box...\nPIPE_NAME: %s\nBOX_NAME: %s\n",
 			request.client_named_pipe_path, request.box_name);
@@ -82,19 +81,13 @@ int subscribe_box(const char *server_pipe, const char *pipe_name,
 	}
 
 	while (true) {
-		char buffer[BUFFER_SIZE];
-		memset(buffer, 0, BUFFER_SIZE);
-		ssize_t n = read(pipenum, buffer, BUFFER_SIZE - 1); //why -1? the \0 is already added by the publisher...
-		if (n == 0) {
-			// ret == 0 indicates EOF
-			fprintf(stderr, "[INFO]: pipe closed\n");
-			return 0;
-		} else if (n == -1) {
+		struct message buffer;
+		ssize_t n = read(pipenum, &buffer, sizeof(buffer));
+		if (n == -1) {
 			// ret == -1 indicates error
 			return -1;
 		} else if (n != 0) {
-			buffer[n] = 0; //why -1? the \0 is already added by the publisher...
-			fprintf(stdout, "%s\n", buffer);
+			fprintf(stdout, "%s\n", buffer.message);
 		}
 	}
 
