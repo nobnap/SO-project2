@@ -12,8 +12,12 @@
 
 #define BUFFER_SIZE 128
 
+int pipenum = -1;
+
 void handle() {
-	// TODO: implement proper closing
+	if (pipenum > 0) {
+		close(pipenum);
+	}
 	fprintf(stdout, "\nReceived messages.\n");
 	exit(EXIT_SUCCESS);
 }
@@ -71,7 +75,7 @@ int subscribe_box(const char *server_pipe, const char *pipe_name,
 		return -1;
 	}
 
-	int pipenum = open(pipe_name, O_RDONLY);
+	pipenum = open(pipe_name, O_RDONLY);
 	if (pipenum == -1) {
 		unlink(pipe_name);
 		return -1; // failed to open pipe
