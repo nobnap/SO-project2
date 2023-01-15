@@ -479,7 +479,6 @@ int create_server(const char *pipe_name, int num) {
 		} else if (n != 0) {
 			printf("REQUEST: %i\nPIPE: %s\nBOX: %s\n", buffer->code, buffer->client_named_pipe_path, buffer->box_name);
 			pcq_enqueue(&queue, (void *)buffer);
-			break;
 		}
 	}
 
