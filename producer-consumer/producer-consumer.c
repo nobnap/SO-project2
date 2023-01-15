@@ -6,7 +6,6 @@
 // Memory: the queue pointer must be previously allocated
 // (either on the stack or the heap)
 int pcq_create(pc_queue_t *queue, size_t capacity) {
-	// FIXME: do we need to allocate space for buffer
 	queue->pcq_buffer = (void **)malloc(capacity * sizeof(void *));
 	queue->pcq_capacity = capacity;
 	pthread_mutex_init(&queue->pcq_current_size_lock, NULL);
