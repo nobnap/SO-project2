@@ -10,7 +10,6 @@
 #include <stdbool.h>
 #include <pthread.h>
 #include "producer-consumer.h"
-#include "protocol.h"
 #include "operations.h"
 #include <signal.h>
 
@@ -27,6 +26,8 @@ struct box {
 	uint64_t n_publishers;
 	uint64_t n_subscribers;
 	uint64_t box_size; //maybe remove this?
+	pthread_mutex_t box_lock;
+	pthread_cond_t box_condvar;
 	struct box* next;
 };
 
@@ -39,8 +40,6 @@ int flag = 0;
 // Global counting variable: used to assign unique IDs to box objects
 static int box_count = 0;
 
-static pthread_mutex_t *box_lock;
-static pthread_cond_t *box_condvar;
 static pthread_mutex_t box_list_lock;
 
 static void sighandler(int sig) {
@@ -60,6 +59,16 @@ static void sighandler(int sig) {
   //Caught SIGQUIT - should we send a proper message?
   exit(EXIT_SUCCESS);
 
+}
+
+void destroy_box_list(struct box* head) {
+	if (head != NULL) {
+		struct box* temp = head;
+		pthread_mutex_destroy(&head->box_lock);
+		pthread_cond_destroy(&head->box_condvar);
+		destroy_box_list(head->next);
+		free(head);
+	}
 }
 
 void send_msg(int tx) {
@@ -178,12 +187,12 @@ int handle_publisher(const char *client_named_pipe_path, const char *box_name) {
 		} else if (n != 0) {
 
 			// Writing in box file
-			pthread_mutex_lock(&box_lock[box->box_id]);
+			pthread_mutex_lock(&box->box_lock);
 			int box_fd = tfs_open(box_name, TFS_O_APPEND);
 			if (box_fd < 0) {
 				box->n_publishers -= 1;
 				close(pub_pipenum);
-				pthread_mutex_unlock(&box_lock[box->box_id]);
+				pthread_mutex_unlock(&box->box_lock);
 				return -1; // failed to open box file
 			}
 			// PLS CHECK THIS PART
@@ -191,18 +200,18 @@ int handle_publisher(const char *client_named_pipe_path, const char *box_name) {
 			if (bytes_written < MESSAGE_SIZE || bytes_written < 0) {
 				box->n_publishers -= 1;
 				close(pub_pipenum);
-				pthread_mutex_unlock(&box_lock[box->box_id]);
+				pthread_mutex_unlock(&box->box_lock);
 				return -1; // failed to write OR write exceeded box max size
 			}
 			box->box_size += (uint64_t) bytes_written;
 			if (tfs_close(box_fd) != 0) {
 				box->n_publishers -= 1;
 				close(pub_pipenum);
-				pthread_mutex_unlock(&box_lock[box->box_id]);
+				pthread_mutex_unlock(&box->box_lock);
 				return -1; // failed to close box file
 			}
-			pthread_cond_broadcast(&box_condvar[box->box_id]);
-			pthread_mutex_unlock(&box_lock[box->box_id]);
+			pthread_cond_broadcast(&box->box_condvar);
+			pthread_mutex_unlock(&box->box_lock);
 		}
 	}
 
@@ -234,28 +243,28 @@ int handle_subscriber(const char *client_named_pipe_path, const char *box_name) 
 
 	while (true) {
 
-		pthread_mutex_lock(&box_lock[box->box_id]);
+		pthread_mutex_lock(&box->box_lock);
 
 		memset(msg_buffer, 0, MESSAGE_SIZE);
 		ssize_t bytes_read = tfs_read(box_fd, msg_buffer, MESSAGE_SIZE); 
 		if (bytes_read < 0) {
 			box->n_subscribers -= 1;
 			close(sub_pipenum);
-			pthread_mutex_unlock(&box_lock[box->box_id]);
+			pthread_mutex_unlock(&box->box_lock);
 			return -1; // error on reading from box
 		} 
 		while(bytes_read == 0) {
-			pthread_cond_wait(&box_condvar[box->box_id], &box_lock[box->box_id]);
+			pthread_cond_wait(&box->box_condvar, &box->box_lock);
 		}
 
 		if (tfs_close(box_fd) != 0) {
 			box->n_subscribers -= 1;
 			close(sub_pipenum);
-			pthread_mutex_unlock(&box_lock[box->box_id]);
+			pthread_mutex_unlock(&box->box_lock);
 			return -1; // failed to close box file
 		}
 
-		pthread_mutex_unlock(&box_lock[box->box_id]);
+		pthread_mutex_unlock(&box->box_lock);
 
 		// Sending read results to subscriber thread through pipe
 		if (bytes_read < MESSAGE_SIZE) msg_buffer[bytes_read] = 0; //adding a \0 to the end just in case
@@ -293,6 +302,9 @@ struct box_answer create_box(const char *box_name) {
 	}
 
 	struct box* new_box = (struct box*) malloc(sizeof(struct box));
+
+	pthread_mutex_lock(&box_list_lock);
+
 	strcpy(new_box->box_name, box_name);
 	new_box->next = NULL;
 	new_box->box_size = 0;
@@ -300,9 +312,11 @@ struct box_answer create_box(const char *box_name) {
 	new_box->n_subscribers = 0;
 	new_box->box_id = box_count;
 	box_count++;
+	pthread_mutex_init(&new_box->box_lock, NULL);
+	pthread_cond_init(&new_box->box_condvar, NULL);
 
-	pthread_mutex_lock(&box_list_lock);
 	add_box_to_list(new_box);
+
 	pthread_mutex_unlock(&box_list_lock);
 
 	return box_answer_init(CREATE_BOX_ANSWER_CODE, 0, NULL);
@@ -478,11 +492,6 @@ int create_server(const char *pipe_name, int num) {
 
 	pthread_mutex_init(&box_list_lock, NULL);
 
-	for(int i = 0; i < MAX_BOX_AMOUNT; i++) {
-		pthread_mutex_init(&box_lock[i], NULL);
-		pthread_cond_init(&box_condvar[i], NULL);
-	}
-
 	pc_queue_t queue;
 	pcq_create(&queue, (size_t) num); //change num to a different constant?
 
@@ -521,10 +530,7 @@ int create_server(const char *pipe_name, int num) {
 
 	pthread_mutex_destroy(&box_list_lock);
 
-	for(int i = 0; i < MAX_BOX_AMOUNT; i++) {
-		pthread_mutex_destroy(&box_lock[i]);
-		pthread_cond_destroy(&box_condvar[i]);
-	}
+	destroy_box_list(head);
 
 	tfs_destroy();
 	close(pipenum);
