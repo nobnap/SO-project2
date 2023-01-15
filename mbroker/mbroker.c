@@ -16,6 +16,7 @@
 
 #define BUFFER_SIZE 128
 #define MESSAGE_SIZE 1024
+#define MAX_BOX_AMOUNT 128
 #define CREATE_BOX_ANSWER_CODE 4
 #define REMOVE_BOX_ANSWER_CODE 6
 #define LIST_BOX_ANSWER_CODE 8
@@ -37,6 +38,10 @@ int flag = 0;
 
 // Global counting variable: used to assign unique IDs to box objects
 static int box_count = 0;
+
+static pthread_mutex_t *box_lock;
+static pthread_cond_t *box_condvar;
+static pthread_mutex_t box_list_lock;
 
 static void sighandler(int sig) {
 
@@ -100,13 +105,18 @@ struct box_answer box_answer_init(uint8_t code, int32_t return_code, char *error
 	return answer;
 }
 
-void add_box_to_list(struct box* head_box, struct box* new_box) {
-	if (head_box->next == NULL) {
-		head_box->next = new_box;
-		return;
-	} else {
-		return add_box_to_list(head_box->next, new_box);
-	}
+//void add_box_to_list(struct box* head_box, struct box* new_box) {
+//  	if (head_box->next == NULL) {
+//  		head_box->next = new_box;
+//  		return;
+//  	} else {
+//  		return add_box_to_list(head_box->next, new_box);
+//  	}
+//}
+
+void add_box_to_list(struct box* new_box) {
+	new_box->next = head;
+	head = new_box;
 }
 
 void remove_box_from_list(struct box* head_box, const char* box_name) {
@@ -148,8 +158,9 @@ int handle_publisher(const char *client_named_pipe_path, const char *box_name) {
 	box->n_publishers += 1;
 	while (true) {
 
-		//add wait on condvar
+		// do i even need to add a wait on condvar here? read func should auto block the thread hopefully
 
+		// Reading published message from session fifo
 		char msg_buffer[MESSAGE_SIZE];
 		memset(msg_buffer, 0, MESSAGE_SIZE);
 		ssize_t n = read(pub_pipenum, msg_buffer, MESSAGE_SIZE);
@@ -165,10 +176,14 @@ int handle_publisher(const char *client_named_pipe_path, const char *box_name) {
 			close(pub_pipenum);
 			return -1;
 		} else if (n != 0) {
+
+			// Writing in box file
+			pthread_mutex_lock(&box_lock[box->box_id]);
 			int box_fd = tfs_open(box_name, TFS_O_APPEND);
 			if (box_fd < 0) {
 				box->n_publishers -= 1;
 				close(pub_pipenum);
+				pthread_mutex_unlock(&box_lock[box->box_id]);
 				return -1; // failed to open box file
 			}
 			// PLS CHECK THIS PART
@@ -176,14 +191,18 @@ int handle_publisher(const char *client_named_pipe_path, const char *box_name) {
 			if (bytes_written < MESSAGE_SIZE || bytes_written < 0) {
 				box->n_publishers -= 1;
 				close(pub_pipenum);
+				pthread_mutex_unlock(&box_lock[box->box_id]);
 				return -1; // failed to write OR write exceeded box max size
 			}
 			box->box_size += (uint64_t) bytes_written;
 			if (tfs_close(box_fd) != 0) {
 				box->n_publishers -= 1;
 				close(pub_pipenum);
-				return -1;
+				pthread_mutex_unlock(&box_lock[box->box_id]);
+				return -1; // failed to close box file
 			}
+			pthread_cond_broadcast(&box_condvar[box->box_id]);
+			pthread_mutex_unlock(&box_lock[box->box_id]);
 		}
 	}
 
@@ -206,16 +225,50 @@ int handle_subscriber(const char *client_named_pipe_path, const char *box_name) 
 	box->n_subscribers += 1;
 	while (true) {
 
-		//add wait on condvar
+		int to_read = box->box_size; //TODO: fix the wait condition
 
+		pthread_mutex_lock(&box_lock[box->box_id]);
+		
+		while(to_read == 0) { //TODO: fix the wait condition
+			pthread_cond_wait(&box_condvar[box->box_id], &box_lock[box->box_id]);
+		}
+
+		// Reading from box file
 		char msg_buffer[MESSAGE_SIZE];
 		memset(msg_buffer, 0, MESSAGE_SIZE);
+		int box_fd = tfs_open(box_name, TFS_O_APPEND);
+		if (box_fd < 0) {
+			box->n_subscribers -= 1;
+			close(sub_pipenum);
+			pthread_mutex_unlock(&box_lock[box->box_id]);
+			return -1; // failed to open box file
+		}
+		ssize_t bytes_read = tfs_read(box_fd, msg_buffer, MESSAGE_SIZE);
+		if (bytes_read < 0) {
+			box->n_subscribers -= 1;
+			close(sub_pipenum);
+			pthread_mutex_unlock(&box_lock[box->box_id]);
+			return -1; // failed to read from file
+		}
+
+		to_read -= bytes_read; //TODO: fix the wait condition
+
+		if (tfs_close(box_fd) != 0) {
+			box->n_subscribers -= 1;
+			close(sub_pipenum);
+			pthread_mutex_unlock(&box_lock[box->box_id]);
+			return -1; // failed to close box file
+		}
+		pthread_mutex_unlock(&box_lock[box->box_id]);
+
+		// Sending read results to subscriber thread through pipe
+		if (bytes_read < MESSAGE_SIZE) msg_buffer[bytes_read] = 0; //adding a \0 to the end just in case
 		ssize_t n = write(sub_pipenum, msg_buffer, MESSAGE_SIZE);
 		if (n == 0) {
 			// n == 0 indicates EOF
 			fprintf(stderr, "[INFO]: pipe closed\n");
 			box->n_subscribers -= 1;
-			//close(sub_pipenum); ?
+			// close(sub_pipenum); we only close the pipe whenever the thread is killed so no
 			return 0;
 		} else if (n == -1) {
 			// ret == -1 indicates error
@@ -237,7 +290,7 @@ struct box_answer create_box(const char *box_name) {
 	sprintf(name, "/%s", box_name);
 	
 	int box_fd = tfs_open(name, TFS_O_CREAT);
-	if (box_fd == -1) {
+	if (box_fd == -1 || box_count >= MAX_BOX_AMOUNT) { // TODO: figure out if the second condition is correct
 		return box_answer_init(CREATE_BOX_ANSWER_CODE, -1, "unable to create box.");
 	}
 
@@ -250,11 +303,9 @@ struct box_answer create_box(const char *box_name) {
 	new_box->box_id = box_count;
 	box_count++;
 
-	if (head == NULL) {
-		head = new_box;
-	} else {
-		add_box_to_list(head, new_box);
-	}
+	pthread_mutex_lock(&box_list_lock);
+	add_box_to_list(new_box);
+	pthread_mutex_unlock(&box_list_lock);
 
 	return box_answer_init(CREATE_BOX_ANSWER_CODE, 0, NULL);
 }
@@ -270,12 +321,16 @@ struct box_answer remove_box(const char *box_name) {
 	}
 
 	if (!strcmp(head->box_name, box_name)) {
+		pthread_mutex_lock(&box_list_lock);
 		struct box* temp = head;
 		head = head->next;
 		free(temp->box_name);
 		free(temp);
+		pthread_mutex_unlock(&box_list_lock);
 	} else {
+		pthread_mutex_lock(&box_list_lock);
 		remove_box_from_list(head, box_name);
+		pthread_mutex_unlock(&box_list_lock);
 	}
 	return box_answer_init(REMOVE_BOX_ANSWER_CODE, 0, NULL);
 }
@@ -290,6 +345,8 @@ int list_boxes(const char *client_named_pipe_path) {
 	struct box_list_entry *entry = (struct box_list_entry*) malloc(sizeof(struct box_list_entry));
 	entry->code = LIST_BOX_ANSWER_CODE;
 
+	pthread_mutex_lock(&box_list_lock);
+
 	if (head == NULL) {
 		entry->last = 1;
 		memset(entry->box_name, '\0', sizeof(entry->box_name));
@@ -299,8 +356,10 @@ int list_boxes(const char *client_named_pipe_path) {
 		ssize_t n = write(client_pipe, entry, sizeof(entry));
 		if (n < 0) {
 			close(client_pipe);
+			pthread_mutex_unlock(&box_list_lock);
 			return -1;
 		}
+		pthread_mutex_unlock(&box_list_lock);
 		return 0;
 	}	
 	
@@ -318,9 +377,13 @@ int list_boxes(const char *client_named_pipe_path) {
 		ssize_t n = write(client_pipe, entry, sizeof(entry));
 		if (n < 0) {
 			close(client_pipe);
+			pthread_mutex_unlock(&box_list_lock);
 			return -1;
 		}
 	}
+
+	pthread_mutex_unlock(&box_list_lock);
+
 	close(client_pipe);
 	return 0;
 }
@@ -359,13 +422,12 @@ void *work(void* main_queue) {
 			case 7:
 				//Pedido de listagem de caixas
 				result = list_boxes(request->client_named_pipe_path);
-
 				break;
 			//   8: Resposta ao pedido de listagem de caixas (mandado pela worker thread na subrotina)
 			default:
 				result = -1;
 		}
-		(void) result;
+		(void) result; //figure out what to do with this
 	}
 	return NULL;
 }
@@ -416,6 +478,13 @@ int create_server(const char *pipe_name, int num) {
 	signal(SIGINT, sighandler);
 	signal(SIGPIPE, SIG_IGN);
 
+	pthread_mutex_init(&box_list_lock, NULL);
+
+	for(int i = 0; i < MAX_BOX_AMOUNT; i++) {
+		pthread_mutex_init(&box_lock[i], NULL);
+		pthread_cond_init(&box_condvar[i], NULL);
+	}
+
 	pc_queue_t queue;
 	pcq_create(&queue, (size_t) num); //change num to a different constant?
 
@@ -447,10 +516,18 @@ int create_server(const char *pipe_name, int num) {
 
 	//using this instead of kill
 	pthread_kill(pid[0], SIGINT);
-	
+
 	pthread_join(pid[0], NULL);
 
 	fprintf(stderr, "[INFO]: closing pipe\n");
+
+	pthread_mutex_destroy(&box_list_lock);
+
+	for(int i = 0; i < MAX_BOX_AMOUNT; i++) {
+		pthread_mutex_destroy(&box_lock[i]);
+		pthread_cond_destroy(&box_condvar[i]);
+	}
+
 	tfs_destroy();
 	close(pipenum);
 	unlink(pipe_name);
