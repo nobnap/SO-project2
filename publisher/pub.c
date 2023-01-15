@@ -82,26 +82,23 @@ int publish_message(const char *server_pipe, const char *pipe_name,
 	}
 
 	while (true) {
-		// deviamos fazer um mecanismo que parte um input do stdin (caso for demasiado grande) em várias mensagens e manda-as todas em ciclo?
-		// neste momento, só truncamos e acabou
 		char buffer[BUFFER_SIZE];
 		memset(buffer, 0, BUFFER_SIZE);
-		ssize_t input = read(STDIN_FILENO, buffer, BUFFER_SIZE - 1);
-		if (input < 0) {
-			fprintf(stderr, "[ERR]: read from stdin failed: %s\n", strerror(errno));
-			exit(EXIT_FAILURE);
+
+		while(fgets(buffer, BUFFER_SIZE, stdin) != NULL) {
+			buffer[BUFFER_SIZE-1] = '\0';
+			struct message msg;
+			msg.code = 9;
+			strcpy(msg.message, buffer);
+
+			ssize_t n = write(pipenum, &msg, sizeof(msg));
+			if (n < 0) {
+				close(pipenum);
+				unlink(pipe_name);
+				return -1;
+			}	
+
 		}
-		buffer[BUFFER_SIZE-1] = '\0';
-
-		struct message msg;
-		msg.code = 9;
-		strcpy(msg.message, buffer);
-
-		ssize_t n = write(pipenum, &msg, sizeof(msg));
-		if (n < 0) {
-			return -1;
-		}
-
 	}
 
 	//desnecessario?
