@@ -370,16 +370,14 @@ void *work(void* main_queue) {
 
 		struct basic_request *request = (struct basic_request *) pcq_dequeue(queue);
 
-		int result;
-
 		switch (request->code) {
 			case 1:
 				//Pedido de registo de publisher
-				result = handle_publisher(request->client_named_pipe_path, request->box_name);
+				handle_publisher(request->client_named_pipe_path, request->box_name);
 				break;
 			case 2:
 				//Pedido de registo de subscriber
-				result = handle_subscriber(request->client_named_pipe_path, request->box_name);
+				handle_subscriber(request->client_named_pipe_path, request->box_name);
 				break; 
 			case 3: ;
 				//Pedido de criação de caixa
@@ -397,13 +395,12 @@ void *work(void* main_queue) {
 			//   6: Resposta ao pedido de remoção de caixa (mandado pela worker thread na subrotina)
 			case 7:
 				//Pedido de listagem de caixas
-				result = list_boxes(request->client_named_pipe_path);
+				list_boxes(request->client_named_pipe_path);
 				break;
 			//   8: Resposta ao pedido de listagem de caixas (mandado pela worker thread na subrotina)
 			default:
-				result = -1;
+				continue;
 		}
-		(void) result; //figure out what to do with this
 	}
 	return NULL;
 }
