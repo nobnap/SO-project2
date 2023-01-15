@@ -14,13 +14,14 @@
 
 #define SUBSCRIBER_REGISTER_CODE 2
 
+int count = 0;
 int pipenum = -1;
 
 void handle() {
 	if (pipenum > 0) {
 		close(pipenum);
 	}
-	fprintf(stdout, "\nReceived messages.\n");
+	fprintf(stdout, "\nReceived %i messages.\n", count);
 	exit(EXIT_SUCCESS);
 }
 
@@ -66,11 +67,11 @@ int subscribe_box(const char *server_pipe, const char *pipe_name,
 
 	signal(SIGINT, handle);
 
-	if (send_request(server_pipe, request) == -1) {
+	if (new_pipe(pipe_name) == -1) {
 		return -1;
 	}
 
-	if (new_pipe(pipe_name) == -1) {
+	if (send_request(server_pipe, request) == -1) {
 		return -1;
 	}
 
@@ -87,6 +88,7 @@ int subscribe_box(const char *server_pipe, const char *pipe_name,
 			// ret == -1 indicates error
 			return -1;
 		} else if (n != 0) {
+			count++;
 			fprintf(stdout, "%s\n", buffer.message);
 		}
 	}

@@ -12,6 +12,7 @@
 #include "producer-consumer.h"
 #include "operations.h"
 #include <signal.h>
+#include "box.h"
 
 #define BUFFER_SIZE 128
 #define MESSAGE_SIZE 1024
@@ -21,17 +22,6 @@
 #define REMOVE_BOX_ANSWER_CODE 6
 #define LIST_BOX_ANSWER_CODE 8
 #define SUBSCRIBER_MESSAGE_CODE 10
-
-struct box {
-	char box_name[32];
-	int box_id;
-	uint64_t n_publishers;
-	uint64_t n_subscribers;
-	uint64_t box_size; //maybe remove this?
-	pthread_mutex_t box_lock;
-	pthread_cond_t box_condvar;
-	struct box* next;
-};
 
 // Global box head struct: used as the start of a global box linked list.
 struct box* head;
@@ -44,32 +34,8 @@ static int box_count = 0;
 
 static pthread_mutex_t box_list_lock;
 
-static void sighandler(int sig) {
-
-  if (sig == SIGINT) {
-    // In some systems, after the handler call the signal gets reverted
-    // to SIG_DFL (the default action associated with the signal).
-    // So we set the signal handler back to our function after each trap.
-    //
-    if (signal(SIGINT, sighandler) == SIG_ERR)
-      exit(EXIT_FAILURE);
-    
-	flag = 1;
-    return; // Resume execution at point of interruption
-  }
-
-  //Caught SIGQUIT - should we send a proper message?
-  exit(EXIT_SUCCESS);
-
-}
-
-void destroy_box_list(struct box* node) {
-	if (node != NULL) {
-		pthread_mutex_destroy(&node->box_lock);
-		pthread_cond_destroy(&node->box_condvar);
-		destroy_box_list(node->next);
-		free(node);
-	}
+static void sighandler() {
+	exit(EXIT_SUCCESS);
 }
 
 int send_message(int pipenum, char const *box_message) {
@@ -95,36 +61,6 @@ int send_answer(const char *client_named_pipe_path, struct box_answer answer) {
 
 	close(pipenum);
 	return 0;
-}
-
-void add_box_to_list(struct box* new_box) {
-	new_box->next = head;
-	head = new_box;
-}
-
-void remove_box_from_list(struct box* head_box, const char* box_name) {
-	if (head_box->next == NULL) return;
-	if (!strcmp(head_box->next->box_name, box_name)) {
-		struct box* temp = head_box->next;
-		head_box->next = temp->next;
-		free(temp->box_name);
-		free(temp);
-		return;
-	} else {
-		return remove_box_from_list(head_box->next, box_name);
-	}
-}
-
-struct box* lookup_box_in_list(struct box* head_box, const char* box_name) {
-	if (head_box == NULL) {
-		return NULL;
-	}
-	if (!strcmp(box_name, head_box->box_name)) {
-		return head;
-	} else {
-		return lookup_box_in_list(head_box->next, box_name);
-	}
-
 }
 
 int handle_publisher(const char *client_named_pipe_path, const char *box_name) {
@@ -153,6 +89,7 @@ int handle_publisher(const char *client_named_pipe_path, const char *box_name) {
 		} else if (n != 0) {
 			size_t len = strlen(msg.message);
 			if (strcmp(msg.message, "\n")) msg.message[len] = '\n';	
+			printf("%s\n", msg.message);
 			// Writing in box file
 			pthread_mutex_lock(&box->box_lock);
 			char name[strlen(box_name)+2];
@@ -223,25 +160,11 @@ int handle_subscriber(const char *client_named_pipe_path, const char *box_name) 
 		ssize_t bytes_read = tfs_read(box_fd, message, MESSAGE_SIZE); 
 
 		if (bytes_read < 0) {
-			box->n_subscribers -= 1;
-			close(sub_pipenum);
 			pthread_mutex_unlock(&box->box_lock);
-			return -1; // error on reading from box
-		}
-
-		while (bytes_read == 0) {
-			pthread_cond_wait(&box->box_condvar, &box->box_lock);
-		}
-
-		if (tfs_close(box_fd) != 0) {
-			box->n_subscribers -= 1;
-			close(sub_pipenum);
-			pthread_mutex_unlock(&box->box_lock);
-			return -1; // failed to close box file
+			break; // error on reading from box
 		}
 
 		pthread_mutex_unlock(&box->box_lock);
-
 		
 		char *token = strtok(message, "\n");
 		printf("%s\n", token);
@@ -253,10 +176,11 @@ int handle_subscriber(const char *client_named_pipe_path, const char *box_name) 
 			ssize_t n = write(sub_pipenum, &msg_buffer, sizeof(msg_buffer));
 			if (n == 0) {
 				// n == 0 indicates EOF
+				tfs_close(box_fd);
 				fprintf(stderr, "[INFO]: pipe closed\n");
 				box->n_subscribers -= 1;
-				// close(sub_pipenum); we only close the pipe whenever the thread is killed so no
-				return 0;
+				close(sub_pipenum); 
+				break;
 			} else if (n == -1) {
 				// ret == -1 indicates error
 				box->n_subscribers -= 1;
@@ -266,39 +190,54 @@ int handle_subscriber(const char *client_named_pipe_path, const char *box_name) 
 			token = strtok(NULL, "\n");
 		}
 
+		while (bytes_read == 0) {
+			pthread_cond_wait(&box->box_condvar, &box->box_lock);
+		}
 
+	}
+
+	if (tfs_close(box_fd) != 0) {
+		box->n_subscribers -= 1;
+		close(sub_pipenum);
+		pthread_mutex_unlock(&box->box_lock);
+		return -1; // failed to close box file
 	}
 
 	box->n_subscribers -= 1;
 	close(sub_pipenum);
-	return 0;
+	return -1;
 }
 
 struct box_answer create_box(const char *box_name) {
-	// FIXME: garantir que se só se cria se a box não existir(se já existir deve falhar)
 	char name[strlen(box_name)+2];
-	sprintf(name, "/%s", box_name); // FIXME: see if there is anything else that needs this
-	
-	int box_fd = tfs_open(name, TFS_O_CREAT);
-	if (box_fd == -1 || box_count >= MAX_BOX_AMOUNT) { // TODO: figure out if the second condition is correct
+	sprintf(name, "/%s", box_name); 
+	int box_fd = tfs_open(name, 0b000);
+	if (box_fd != -1) {
+		close(box_fd);
+		return box_answer_init(CREATE_BOX_ANSWER_CODE, -1, "box already exists.");
+	}
+
+	box_fd = tfs_open(name, TFS_O_CREAT);
+	if (box_fd == -1) { 
+		return box_answer_init(CREATE_BOX_ANSWER_CODE, -1, "unable to create box.");
+	}
+
+	if (box_count >= MAX_BOX_AMOUNT) {
 		return box_answer_init(CREATE_BOX_ANSWER_CODE, -1, "unable to create box.");
 	}
 
 	struct box* new_box = (struct box*) malloc(sizeof(struct box));
+	init_box(new_box, box_name);
 
 	pthread_mutex_lock(&box_list_lock);
-
-	strcpy(new_box->box_name, box_name);
-	new_box->next = NULL;
-	new_box->box_size = 0;
-	new_box->n_publishers = 0;
-	new_box->n_subscribers = 0;
-	new_box->box_id = box_count;
+	
 	box_count++;
-	pthread_mutex_init(&new_box->box_lock, NULL);
-	pthread_cond_init(&new_box->box_condvar, NULL);
-
-	add_box_to_list(new_box);
+	if (head == NULL) {
+		head = new_box;
+	} else {
+		new_box->next = head;
+		head = new_box;
+	}
 
 	pthread_mutex_unlock(&box_list_lock);
 
@@ -311,18 +250,25 @@ struct box_answer remove_box(const char *box_name) {
 		return box_answer_init(REMOVE_BOX_ANSWER_CODE, -1, "unable to remove box.");
 	}
 
-	if (!strcmp(head->box_name, box_name)) {
-		pthread_mutex_lock(&box_list_lock);
-		struct box* temp = head;
-		head = head->next;
-		free(temp->box_name);
-		free(temp);
-		pthread_mutex_unlock(&box_list_lock);
-	} else {
-		pthread_mutex_lock(&box_list_lock);
-		remove_box_from_list(head, box_name);
-		pthread_mutex_unlock(&box_list_lock);
+	pthread_mutex_lock(&box_list_lock);
+	struct box* prev = NULL;
+	struct box* curr = head;
+	while (curr != NULL) {
+		if (!strcmp(curr->box_name, box_name)) {
+			if (prev == NULL) {
+				head = curr->next;
+			} else {
+				prev->next = curr->next;
+			}
+			free(curr);
+			break;
+		}
+		prev = curr;
+		curr = curr->next;
 	}
+	box_count--;
+	pthread_mutex_unlock(&box_list_lock);
+
 	return box_answer_init(REMOVE_BOX_ANSWER_CODE, 0, NULL);
 }
 
@@ -337,6 +283,8 @@ int list_boxes(const char *client_named_pipe_path) {
 
 	pthread_mutex_lock(&box_list_lock);
 
+	printf("box name: %s\n", head->box_name);
+
 	if (head == NULL) {
 		entry = box_list_entry_init(LIST_BOX_ANSWER_CODE, 1, NULL, 0, 0, 0);
 
@@ -350,16 +298,16 @@ int list_boxes(const char *client_named_pipe_path) {
 		return 0;
 	}	
 	
-	for(; head != NULL; head = head->next) {
-		printf("nome %s\n", head->box_name);
-		if (head->next == NULL) {
-			entry = box_list_entry_init(LIST_BOX_ANSWER_CODE, 1, head->box_name,
-										head->box_size, head->n_publishers,
-										head->n_subscribers);
+	struct box* temp = head;
+	for (; temp != NULL; temp = temp->next) {
+		if (temp->next == NULL) {
+			entry = box_list_entry_init(LIST_BOX_ANSWER_CODE, 1, temp->box_name,
+										temp->box_size, temp->n_publishers,
+										temp->n_subscribers);
 		} else {
-			entry = box_list_entry_init(LIST_BOX_ANSWER_CODE, 0, head->box_name,
-										head->box_size, head->n_publishers,
-										head->n_subscribers);
+			entry = box_list_entry_init(LIST_BOX_ANSWER_CODE, 0, temp->box_name,
+										temp->box_size, temp->n_publishers,
+										temp->n_subscribers);
 		}
 
 		ssize_t n = write(client_pipe, &entry, sizeof(entry));
@@ -381,6 +329,7 @@ void *work(void* main_queue) {
 	while (true) {
 
 		struct basic_request *request = (struct basic_request *) pcq_dequeue(queue);
+		printf("REQUEST: %i\nPIPE: %s\nBOX: %s\n", request->code, request->client_named_pipe_path, request->box_name);
 
 		switch (request->code) {
 			case 1:
@@ -466,37 +415,32 @@ int create_server(const char *pipe_name, int num) {
 	pthread_mutex_init(&box_list_lock, NULL);
 
 	pc_queue_t queue;
-	pcq_create(&queue, (size_t) num); //change num to a different constant?
+	pcq_create(&queue, (size_t) num*2); //change num to a different constant?
+	head = NULL;
 
 	pthread_t pid[num];
 	// for testing purposes, I only want to create a single thread
-	if (pthread_create(&pid[0], NULL, work, (void *)&queue) < 0) {
-		tfs_destroy();
-		close(pipenum);
-		unlink(pipe_name);
-		fprintf(stderr, "failed to create thread: %s\n", strerror(errno));
-		exit(EXIT_FAILURE);
+	for (size_t i = 0; i < num; i++) {
+		if (pthread_create(&pid[i], NULL, work, (void *)&queue) < 0) {
+			tfs_destroy();
+			close(pipenum);
+			unlink(pipe_name);
+			fprintf(stderr, "failed to create thread: %s\n", strerror(errno));
+			exit(EXIT_FAILURE);
+		}
 	}
 
-	head = NULL;
-
-	// flag switches to 1 when the thread receives SIGINT
-	while (flag == 0) {
-		struct basic_request* buffer = (struct basic_request*)malloc(sizeof(struct basic_request));
-		ssize_t n = read(pipenum, buffer, sizeof(struct basic_request));
+	while (true) {
+		struct basic_request buffer;
+		ssize_t n = read(pipenum, &buffer, sizeof(struct basic_request));
 		if (n == -1) {
 			// ret == -1 indicates error
 			break;
 		} else if (n != 0) {
-			printf("REQUEST: %i\nPIPE: %s\nBOX: %s\n", buffer->code, buffer->client_named_pipe_path, buffer->box_name);
-			pcq_enqueue(&queue, (void *)buffer);
+			printf("REQUEST: %i\nPIPE: %s\nBOX: %s\n", buffer.code, buffer.client_named_pipe_path, buffer.box_name);
+			pcq_enqueue(&queue, (void *)&buffer);
 		}
 	}
-
-	//using this instead of kill
-	pthread_kill(pid[0], SIGINT);
-
-	pthread_join(pid[0], NULL);
 
 	fprintf(stderr, "[INFO]: closing pipe\n");
 

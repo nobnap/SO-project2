@@ -40,13 +40,11 @@ int pcq_destroy(pc_queue_t *queue) {
 //
 // If the queue is full, sleep until the queue has space
 int pcq_enqueue(pc_queue_t *queue, void *elem) {
-	pthread_mutex_lock(&queue->pcq_current_size_lock);
+	pthread_mutex_lock(&queue->pcq_pusher_condvar_lock);
 	while (queue->pcq_current_size == queue->pcq_capacity) {
-		pthread_mutex_unlock(&queue->pcq_current_size_lock);
-		pthread_cond_wait(&queue->pcq_pusher_condvar,
-						  &queue->pcq_pusher_condvar_lock);
+		pthread_cond_wait(&queue->pcq_pusher_condvar, &queue->pcq_pusher_condvar_lock);
 	}
-	pthread_mutex_unlock(&queue->pcq_current_size_lock);
+	pthread_mutex_unlock(&queue->pcq_pusher_condvar_lock);
 
 	pthread_mutex_lock(&queue->pcq_current_size_lock);
 	queue->pcq_current_size++;
@@ -60,7 +58,9 @@ int pcq_enqueue(pc_queue_t *queue, void *elem) {
 		queue->pcq_head++;
 	pthread_mutex_unlock(&queue->pcq_head_lock);
 
+	pthread_mutex_lock(&queue->pcq_popper_condvar_lock);
 	pthread_cond_signal(&queue->pcq_popper_condvar);
+	pthread_mutex_unlock(&queue->pcq_popper_condvar_lock);
 
 	return 0;
 }
@@ -69,14 +69,12 @@ int pcq_enqueue(pc_queue_t *queue, void *elem) {
 //
 // If the queue is empty, sleep until the queue has an element
 void *pcq_dequeue(pc_queue_t *queue) {
-	pthread_mutex_lock(&queue->pcq_current_size_lock);
+	// lock the current size variable
+	pthread_mutex_lock(&queue->pcq_popper_condvar_lock);
 	while (queue->pcq_current_size == 0) {
-		pthread_mutex_unlock(&queue->pcq_current_size_lock);
-		pthread_cond_wait(&queue->pcq_popper_condvar,
-						  &queue->pcq_popper_condvar_lock);
+		pthread_cond_wait(&queue->pcq_popper_condvar, &queue->pcq_popper_condvar_lock);
 	}
-
-	pthread_mutex_unlock(&queue->pcq_current_size_lock);
+	pthread_mutex_unlock(&queue->pcq_popper_condvar_lock);
 
 	pthread_mutex_lock(&queue->pcq_current_size_lock);
 	queue->pcq_current_size--;
@@ -90,7 +88,9 @@ void *pcq_dequeue(pc_queue_t *queue) {
 		queue->pcq_tail++;
 	pthread_mutex_unlock(&queue->pcq_tail_lock);
 
+	pthread_mutex_lock(&queue->pcq_pusher_condvar_lock);
 	pthread_cond_signal(&queue->pcq_pusher_condvar);
+	pthread_mutex_unlock(&queue->pcq_pusher_condvar_lock);
 
 	return elem;
 }
