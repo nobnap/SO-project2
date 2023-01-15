@@ -156,7 +156,7 @@ int handle_publisher(const char *client_named_pipe_path, const char *box_name) {
 			close(pub_pipenum); //FIXME: estes return -1
 			return -1;
 		} else if (n != 0) {
-			int len = strlen(msg.message);
+			size_t len = strlen(msg.message);
 			msg.message[len] = '\n';	
 			// Writing in box file
 			pthread_mutex_lock(&box->box_lock);
@@ -340,6 +340,7 @@ int list_boxes(const char *client_named_pipe_path) {
 	}	
 	
 	for(; head != NULL; head = head->next) {
+		printf("nome %s\n", head->box_name);
 		if (head->next == NULL) {
 			entry = box_list_entry_init(LIST_BOX_ANSWER_CODE, 1, head->box_name,
 										head->box_size, head->n_publishers,
