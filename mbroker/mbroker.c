@@ -16,9 +16,11 @@
 #define BUFFER_SIZE 128
 #define MESSAGE_SIZE 1024
 #define MAX_BOX_AMOUNT 128
+
 #define CREATE_BOX_ANSWER_CODE 4
 #define REMOVE_BOX_ANSWER_CODE 6
 #define LIST_BOX_ANSWER_CODE 8
+#define SUBSCRIBER_MESSAGE_CODE 10
 
 struct box {
 	char box_name[32];
@@ -71,20 +73,13 @@ void destroy_box_list(struct box* head) {
 	}
 }
 
-void send_msg(int tx) {
-	char const *str = "WOW, A MESSAGE";
-	size_t len = strlen(str);
-	ssize_t written = 0;
-
-	while (written < len) {
-		ssize_t ret = write(tx, str + written, len - (size_t)written);
-		if (ret < 0) {
-			fprintf(stderr, "[ERR]: write failed: %s\n", strerror(errno));
-			exit(EXIT_FAILURE);
-		}
-
-		written += ret;
+int send_message(int pipenum, char const *box_message) {
+	struct message msg = message_init(SUBSCRIBER_MESSAGE_CODE, box_message);
+	ssize_t n = write(pipenum, &msg, sizeof(struct message));
+	if (n == -1) {
+		return -1;
 	}
+	return 0;
 }
 
 int send_answer(const char *client_named_pipe_path, struct box_answer answer) {
@@ -102,26 +97,6 @@ int send_answer(const char *client_named_pipe_path, struct box_answer answer) {
 	close(pipenum);
 	return 0;
 }
-
-struct box_answer box_answer_init(uint8_t code, int32_t return_code, char *error_message) {
-	struct box_answer answer;
-	answer.code = code;
-	answer.return_code = return_code;
-	memset(answer.error_message, 0, sizeof(answer.error_message));
-	if (error_message != NULL) {
-		strcpy(answer.error_message, error_message);
-	}
-	return answer;
-}
-
-//void add_box_to_list(struct box* head_box, struct box* new_box) {
-//  	if (head_box->next == NULL) {
-//  		head_box->next = new_box;
-//  		return;
-//  	} else {
-//  		return add_box_to_list(head_box->next, new_box);
-//  	}
-//}
 
 void add_box_to_list(struct box* new_box) {
 	new_box->next = head;
@@ -166,11 +141,8 @@ int handle_publisher(const char *client_named_pipe_path, const char *box_name) {
 
 	box->n_publishers += 1;
 	while (true) {
-
-		// do i even need to add a wait on condvar here? read func should auto block the thread hopefully
-
 		// Reading published message from session fifo
-		char msg_buffer[MESSAGE_SIZE];
+		char msg_buffer[MESSAGE_SIZE]; // FIXME: protocol 
 		memset(msg_buffer, 0, MESSAGE_SIZE);
 		ssize_t n = read(pub_pipenum, msg_buffer, MESSAGE_SIZE);
 		if (n == 0) {
@@ -182,7 +154,7 @@ int handle_publisher(const char *client_named_pipe_path, const char *box_name) {
 		} else if (n == -1) {
 			// ret == -1 indicates error
 			box->n_publishers -= 1;
-			close(pub_pipenum);
+			close(pub_pipenum); //FIXME: estes return -1
 			return -1;
 		} else if (n != 0) {
 
@@ -246,7 +218,7 @@ int handle_subscriber(const char *client_named_pipe_path, const char *box_name) 
 		pthread_mutex_lock(&box->box_lock);
 
 		memset(msg_buffer, 0, MESSAGE_SIZE);
-		ssize_t bytes_read = tfs_read(box_fd, msg_buffer, MESSAGE_SIZE); 
+		ssize_t bytes_read = tfs_read(box_fd, msg_buffer, MESSAGE_SIZE-1); 
 		if (bytes_read < 0) {
 			box->n_subscribers -= 1;
 			close(sub_pipenum);
@@ -294,7 +266,7 @@ struct box_answer create_box(const char *box_name) {
 	// FIXME: garantir que se só se cria se a box não existir(se já existir deve falhar)
 	size_t n = strlen(box_name)+2;
 	char name[n];
-	sprintf(name, "/%s", box_name);
+	sprintf(name, "/%s", box_name); // FIXME: see if there is anything else that needs this
 	
 	int box_fd = tfs_open(name, TFS_O_CREAT);
 	if (box_fd == -1 || box_count >= MAX_BOX_AMOUNT) { // TODO: figure out if the second condition is correct
@@ -324,12 +296,8 @@ struct box_answer create_box(const char *box_name) {
 
 struct box_answer remove_box(const char *box_name) {
 
-	if (tfs_unlink(box_name) < 0) {
-		return box_answer_init(REMOVE_BOX_ANSWER_CODE, -1, "unable to create box.");
-	}
-
-	if (head == NULL) {
-		return box_answer_init(REMOVE_BOX_ANSWER_CODE, -1, "unable to create box.");
+	if (tfs_unlink(box_name) < 0 || head == NULL) {
+		return box_answer_init(REMOVE_BOX_ANSWER_CODE, -1, "unable to remove box.");
 	}
 
 	if (!strcmp(head->box_name, box_name)) {
@@ -354,18 +322,14 @@ int list_boxes(const char *client_named_pipe_path) {
 		return -1;
 	}
 
-	struct box_list_entry *entry = (struct box_list_entry*) malloc(sizeof(struct box_list_entry));
-	entry->code = LIST_BOX_ANSWER_CODE;
+	struct box_list_entry entry;
 
 	pthread_mutex_lock(&box_list_lock);
 
 	if (head == NULL) {
-		entry->last = 1;
-		memset(entry->box_name, '\0', sizeof(entry->box_name));
-		entry->n_publishers = 0;
-		entry->n_subscribers = 0;
+		entry = box_list_entry_init(LIST_BOX_ANSWER_CODE, 1, NULL, 0, 0, 0);
 
-		ssize_t n = write(client_pipe, entry, sizeof(entry));
+		ssize_t n = write(client_pipe, &entry, sizeof(entry));
 		if (n < 0) {
 			close(client_pipe);
 			pthread_mutex_unlock(&box_list_lock);
@@ -377,16 +341,16 @@ int list_boxes(const char *client_named_pipe_path) {
 	
 	for(; head != NULL; head = head->next) {
 		if (head->next == NULL) {
-			entry->last = 1;
+			entry = box_list_entry_init(LIST_BOX_ANSWER_CODE, 1, head->box_name,
+										head->box_size, head->n_publishers,
+										head->n_subscribers);
 		} else {
-			entry->last = 0;
+			entry = box_list_entry_init(LIST_BOX_ANSWER_CODE, 1, head->box_name,
+										head->box_size, head->n_publishers,
+										head->n_subscribers);
 		}
-		strcpy(entry->box_name, head->box_name);
-		entry->box_size = head->box_size;
-		entry->n_publishers = head->n_publishers;
-		entry->n_subscribers = head->n_subscribers;
 
-		ssize_t n = write(client_pipe, entry, sizeof(entry));
+		ssize_t n = write(client_pipe, &entry, sizeof(entry));
 		if (n < 0) {
 			close(client_pipe);
 			pthread_mutex_unlock(&box_list_lock);
