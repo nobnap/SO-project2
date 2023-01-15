@@ -48,22 +48,17 @@ int send_request(const char *server_pipe, struct basic_request request) {
 
 	ssize_t ret = write(server, &request, sizeof(request));
 	if (ret < 0) {
-		fprintf(stderr, "[ERR]: write failed: %s\n", strerror(errno));
-		exit(EXIT_FAILURE);
+		return -1;
 	}
 
 	close(server);
 
-	printf("REQUEST SENT\n");
 	return 0;
 }
 
 int subscribe_box(const char *server_pipe, const char *pipe_name,
 				  const char *box_name) {
 	struct basic_request request = basic_request_init(SUBSCRIBER_REGISTER_CODE, pipe_name, box_name);
-
-	fprintf(stderr, "subscribing to box...\nPIPE_NAME: %s\nBOX_NAME: %s\n",
-			request.client_named_pipe_path, request.box_name);
 
 	signal(SIGINT, handle);
 
@@ -85,7 +80,7 @@ int subscribe_box(const char *server_pipe, const char *pipe_name,
 		struct message buffer;
 		ssize_t n = read(pipenum, &buffer, sizeof(buffer));
 		if (n == -1) {
-			// ret == -1 indicates error
+			// n == -1 indicates error
 			return -1;
 		} else if (n != 0) {
 			count++;

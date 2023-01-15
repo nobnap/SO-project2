@@ -69,7 +69,6 @@ int pcq_enqueue(pc_queue_t *queue, void *elem) {
 //
 // If the queue is empty, sleep until the queue has an element
 void *pcq_dequeue(pc_queue_t *queue) {
-	// lock the current size variable
 	pthread_mutex_lock(&queue->pcq_popper_condvar_lock);
 	while (queue->pcq_current_size == 0) {
 		pthread_cond_wait(&queue->pcq_popper_condvar, &queue->pcq_popper_condvar_lock);

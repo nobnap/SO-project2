@@ -20,7 +20,6 @@ void handle() {
 	if (pipenum > 0) {
 		close(pipenum);
 	}
-	fprintf(stdout, "\nPublished messages.\n");
 	exit(EXIT_SUCCESS);
 }
 
@@ -47,13 +46,11 @@ int send_request(const char *server_pipe, struct basic_request request) {
 
 	ssize_t ret = write(server, &request, sizeof(request));
 	if (ret < 0) {
-		fprintf(stderr, "[ERR]: write failed: %s\n", strerror(errno));
-		exit(EXIT_FAILURE);
+		return -1;
 	}
 
 	close(server);
 
-	printf("REQUEST SENT\n");
 	return 0;
 }
 
@@ -61,9 +58,6 @@ int publish_message(const char *server_pipe, const char *pipe_name,
 					const char *box_name) {
 	struct basic_request request =
 		basic_request_init(PUBLISHER_REGISTER_CODE, pipe_name, box_name);
-
-	fprintf(stderr, "publishing to box...\nPIPE_NAME: %s\nBOX_NAME: %s\n",
-			request.client_named_pipe_path, request.box_name);
 
 	signal(SIGPIPE, handle);
 	signal(SIGINT, handle);

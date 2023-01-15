@@ -14,9 +14,6 @@
 #define REMOVE_BOX_REQUEST_CODE 5
 #define LIST_BOX_REQUEST_CODE 7
 
-// TODO: add signals para interrupções maybe?
-// TODO: decidir se usamos exit ou return -1
-
 static void print_usage() {
 	fprintf(stderr,
 			"usage: \n"
@@ -48,26 +45,16 @@ int send_request(const char *server_pipe, struct basic_request request) {
 
 	ssize_t ret = write(server, &request, sizeof(request));
 	if (ret < 0) {
-		fprintf(stderr, "[ERR]: write failed: %s\n", strerror(errno));
-		exit(EXIT_FAILURE);
+		return -1;
 	}
 
 	close(server);
-
-	printf("REQUEST SENT\n");
 	return 0;
 }
 
 int list_boxes(const char *server_pipe, const char *pipe_name) {
-	struct basic_request request;
-	request.code = LIST_BOX_REQUEST_CODE;
-	memset(request.client_named_pipe_path, 0,
-		   sizeof(request.client_named_pipe_path));
-	strcpy(request.client_named_pipe_path, pipe_name);
-	memset(request.box_name, 0, sizeof(request.box_name));
-
-	fprintf(stderr, "listing boxes...\nPIPE_NAME: %s\nBOX_NAME: %s\n",
-			request.client_named_pipe_path, request.box_name);
+	struct basic_request request = basic_request_init(LIST_BOX_REQUEST_CODE,
+													  pipe_name, NULL);
 
 	if (send_request(server_pipe, request) == -1) {
 		return -1;
@@ -106,16 +93,8 @@ int list_boxes(const char *server_pipe, const char *pipe_name) {
 
 int create_box(const char *server_pipe, const char *pipe_name,
 			   const char *box_name) {
-	struct basic_request request;
-	request.code = CREATE_BOX_REQUEST_CODE;
-	memset(request.client_named_pipe_path, 0,
-		   sizeof(request.client_named_pipe_path));
-	strcpy(request.client_named_pipe_path, pipe_name);
-	memset(request.box_name, 0, sizeof(request.box_name));
-	strcpy(request.box_name, box_name);
-
-	fprintf(stderr, "creating box...\nPIPE_NAME: %s\nBOX_NAME: %s\n",
-			request.client_named_pipe_path, request.box_name);
+	struct basic_request request = basic_request_init(CREATE_BOX_REQUEST_CODE,
+													  pipe_name, box_name);
 
 	if (send_request(server_pipe, request) == -1) {
 		return -1;
@@ -138,8 +117,6 @@ int create_box(const char *server_pipe, const char *pipe_name,
 			// ret == -1 indicates error
 			break;
 		} else if (n != 0) {
-			printf("REQUEST: %i\nRETURN CODE: %d\nERROR: %s\n", buffer.code,
-				   buffer.return_code, buffer.error_message);
 			if (buffer.return_code == 0)
 				fprintf(stdout, "OK\n");
 			else
@@ -155,16 +132,8 @@ int create_box(const char *server_pipe, const char *pipe_name,
 
 int remove_box(const char *server_pipe, const char *pipe_name,
 			   const char *box_name) {
-	struct basic_request request;
-	request.code = REMOVE_BOX_REQUEST_CODE;
-	memset(request.client_named_pipe_path, 0,
-		   sizeof(request.client_named_pipe_path));
-	strcpy(request.client_named_pipe_path, pipe_name);
-	memset(request.box_name, 0, sizeof(request.box_name));
-	strcpy(request.box_name, box_name);
-
-	fprintf(stderr, "removing box...\nPIPE_NAME: %s\nBOX_NAME: %s\n",
-			request.client_named_pipe_path, request.box_name);
+	struct basic_request request = basic_request_init(REMOVE_BOX_REQUEST_CODE,
+													  pipe_name, box_name);
 
 	if (send_request(server_pipe, request) == -1) {
 		return -1;
@@ -190,8 +159,6 @@ int remove_box(const char *server_pipe, const char *pipe_name,
 			// ret == -1 indicates error
 			break;
 		} else if (n != 0) {
-			printf("REQUEST: %i\nRETURN CODE: %d\nERROR: %s\n", buffer.code,
-				   buffer.return_code, buffer.error_message);
 			if (buffer.return_code == 0)
 				fprintf(stdout, "OK\n");
 			else

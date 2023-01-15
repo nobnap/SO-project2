@@ -16,8 +16,6 @@ struct box {
 
 void init_box(struct box* box, const char* box_name);
 void destroy_box_list(struct box* node);
-void add_box_to_list(struct box* head_box, struct box* new_box);
-void remove_box_from_list(struct box* head_box, const char* box_name);
 struct box* lookup_box_in_list(struct box* head_box, const char* box_name);
 
 #endif

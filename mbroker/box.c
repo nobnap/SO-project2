@@ -21,27 +21,6 @@ void destroy_box_list(struct box* node) {
 	}
 }
 
-void add_box_to_list(struct box* head_box, struct box* new_box) {
-	if (head_box == NULL) {
-		head_box = new_box;
-		return;
-	}
-	new_box->next = head_box;
-	head_box = new_box;
-}
-
-void remove_box_from_list(struct box* head_box, const char* box_name) {
-	if (head_box->next == NULL) return;
-	if (!strcmp(head_box->next->box_name, box_name)) {
-		struct box* temp = head_box->next;
-		head_box->next = temp->next;
-		free(temp);
-		return;
-	} else {
-		return remove_box_from_list(head_box->next, box_name);
-	}
-}
-
 struct box* lookup_box_in_list(struct box* head_box, const char* box_name) {
 	if (head_box == NULL) {
 		return NULL;
