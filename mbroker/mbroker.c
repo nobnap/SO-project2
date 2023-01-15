@@ -63,13 +63,12 @@ static void sighandler(int sig) {
 
 }
 
-void destroy_box_list(struct box* head) {
-	if (head != NULL) {
-		struct box* temp = head;
-		pthread_mutex_destroy(&head->box_lock);
-		pthread_cond_destroy(&head->box_condvar);
-		destroy_box_list(head->next);
-		free(head);
+void destroy_box_list(struct box* node) {
+	if (node != NULL) {
+		pthread_mutex_destroy(&node->box_lock);
+		pthread_cond_destroy(&node->box_condvar);
+		destroy_box_list(node->next);
+		free(node);
 	}
 }
 
