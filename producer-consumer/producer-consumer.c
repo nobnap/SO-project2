@@ -50,7 +50,6 @@ int pcq_enqueue(pc_queue_t *queue, void *elem) {
 
 	pthread_mutex_lock(&queue->pcq_current_size_lock);
 	queue->pcq_current_size++;
-	pthread_cond_signal(&queue->pcq_popper_condvar);
 	pthread_mutex_unlock(&queue->pcq_current_size_lock);
 
 	pthread_mutex_lock(&queue->pcq_head_lock);
@@ -60,6 +59,8 @@ int pcq_enqueue(pc_queue_t *queue, void *elem) {
 	else
 		queue->pcq_head++;
 	pthread_mutex_unlock(&queue->pcq_head_lock);
+
+	pthread_cond_signal(&queue->pcq_popper_condvar);
 
 	return 0;
 }
@@ -74,11 +75,11 @@ void *pcq_dequeue(pc_queue_t *queue) {
 		pthread_cond_wait(&queue->pcq_popper_condvar,
 						  &queue->pcq_popper_condvar_lock);
 	}
+
 	pthread_mutex_unlock(&queue->pcq_current_size_lock);
 
 	pthread_mutex_lock(&queue->pcq_current_size_lock);
 	queue->pcq_current_size--;
-	pthread_cond_signal(&queue->pcq_pusher_condvar);
 	pthread_mutex_unlock(&queue->pcq_current_size_lock);
 
 	pthread_mutex_lock(&queue->pcq_tail_lock);
@@ -88,6 +89,8 @@ void *pcq_dequeue(pc_queue_t *queue) {
 	else
 		queue->pcq_tail++;
 	pthread_mutex_unlock(&queue->pcq_tail_lock);
+
+	pthread_cond_signal(&queue->pcq_pusher_condvar);
 
 	return elem;
 }

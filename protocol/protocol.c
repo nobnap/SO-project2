@@ -17,7 +17,7 @@ struct message message_init(uint8_t code, char const *message) {
 	struct message msg;
 	msg.code = code;
 	memset(msg.message, 0, sizeof(msg.message));
-	strcpy(msg.message, message);
+	if (message != NULL) strcpy(msg.message, message);
 	return msg;
 }
 

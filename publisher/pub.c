@@ -62,7 +62,7 @@ int publish_message(const char *server_pipe, const char *pipe_name,
 	struct basic_request request =
 		basic_request_init(PUBLISHER_REGISTER_CODE, pipe_name, box_name);
 
-	fprintf(stderr, "subscribing to box...\nPIPE_NAME: %s\nBOX_NAME: %s\n",
+	fprintf(stderr, "publishing to box...\nPIPE_NAME: %s\nBOX_NAME: %s\n",
 			request.client_named_pipe_path, request.box_name);
 
 	signal(SIGPIPE, handle);
@@ -89,7 +89,6 @@ int publish_message(const char *server_pipe, const char *pipe_name,
 		while (fgets(buffer, BUFFER_SIZE - 1, stdin) != NULL) {
 			buffer[BUFFER_SIZE - 1] = '\0'; // FIXME: buffer sizes
 			struct message msg = message_init(PUBLISHER_MESSAGE_CODE, buffer);
-
 			ssize_t n = write(pipenum, &msg, sizeof(msg));
 			if (n < 0) {
 				close(pipenum);

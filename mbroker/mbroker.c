@@ -141,15 +141,10 @@ int handle_publisher(const char *client_named_pipe_path, const char *box_name) {
 	box->n_publishers += 1;
 	while (true) {
 		// Reading published message from session fifo
-		//char msg_buffer[MESSAGE_SIZE];
 		struct message msg;
 		ssize_t n = read(pub_pipenum, &msg, sizeof(struct message));
 		if (n == 0) {
-			// n == 0 indicates EOF
-			fprintf(stderr, "[INFO]: pipe closed\n");
-			box->n_publishers -= 1;
-			//close(pub_pipenum); ?
-			return 0;
+			break;
 		} else if (n == -1) {
 			// ret == -1 indicates error
 			box->n_publishers -= 1;
@@ -157,24 +152,27 @@ int handle_publisher(const char *client_named_pipe_path, const char *box_name) {
 			return -1;
 		} else if (n != 0) {
 			size_t len = strlen(msg.message);
-			msg.message[len] = '\n';	
+			if (strcmp(msg.message, "\n")) msg.message[len] = '\n';	
 			// Writing in box file
 			pthread_mutex_lock(&box->box_lock);
-			int box_fd = tfs_open(box_name, TFS_O_APPEND);
+			char name[strlen(box_name)+2];
+			sprintf(name, "/%s", box_name);
+			int box_fd = tfs_open(name, TFS_O_APPEND);
 			if (box_fd < 0) {
 				box->n_publishers -= 1;
 				close(pub_pipenum);
 				pthread_mutex_unlock(&box->box_lock);
 				return -1; // failed to open box file
 			}
-			// PLS CHECK THIS PART
+			
 			ssize_t bytes_written = tfs_write(box_fd, msg.message, len+1);
-			if (bytes_written < MESSAGE_SIZE || bytes_written < 0) {
+			if (bytes_written < 0) {
 				box->n_publishers -= 1;
 				close(pub_pipenum);
 				pthread_mutex_unlock(&box->box_lock);
 				return -1; // failed to write OR write exceeded box max size
 			}
+
 			box->box_size += (uint64_t) bytes_written;
 			if (tfs_close(box_fd) != 0) {
 				box->n_publishers -= 1;
@@ -203,13 +201,13 @@ int handle_subscriber(const char *client_named_pipe_path, const char *box_name) 
 		return -1; //failed to open pipe
 	}
 
-	int box_fd = tfs_open(box_name, 0b000);
+	char name[strlen(box_name)+2];
+	sprintf(name, "/%s", box_name);
+	int box_fd = tfs_open(name, 0b000);
 	if (box_fd < 0) {
 		close(sub_pipenum);
 		return -1; // failed to open file
 	}
-
-	char msg_buffer[MESSAGE_SIZE];
 
 	box->n_subscribers += 1;
 
@@ -217,15 +215,21 @@ int handle_subscriber(const char *client_named_pipe_path, const char *box_name) 
 
 		pthread_mutex_lock(&box->box_lock);
 
-		memset(msg_buffer, 0, MESSAGE_SIZE);
-		ssize_t bytes_read = tfs_read(box_fd, msg_buffer, MESSAGE_SIZE-1); 
+		struct message msg_buffer = message_init(SUBSCRIBER_MESSAGE_CODE, NULL);
+		memset(msg_buffer.message, 0, sizeof(msg_buffer.message));
+		
+		char message[MESSAGE_SIZE];
+		memset(message, 0, MESSAGE_SIZE);
+		ssize_t bytes_read = tfs_read(box_fd, message, MESSAGE_SIZE); 
+
 		if (bytes_read < 0) {
 			box->n_subscribers -= 1;
 			close(sub_pipenum);
 			pthread_mutex_unlock(&box->box_lock);
 			return -1; // error on reading from box
-		} 
-		while(bytes_read == 0) {
+		}
+
+		while (bytes_read == 0) {
 			pthread_cond_wait(&box->box_condvar, &box->box_lock);
 		}
 
@@ -238,20 +242,28 @@ int handle_subscriber(const char *client_named_pipe_path, const char *box_name) 
 
 		pthread_mutex_unlock(&box->box_lock);
 
-		// Sending read results to subscriber thread through pipe
-		if (bytes_read < MESSAGE_SIZE) msg_buffer[bytes_read] = 0; //adding a \0 to the end just in case
-		ssize_t n = write(sub_pipenum, msg_buffer, MESSAGE_SIZE);
-		if (n == 0) {
-			// n == 0 indicates EOF
-			fprintf(stderr, "[INFO]: pipe closed\n");
-			box->n_subscribers -= 1;
-			// close(sub_pipenum); we only close the pipe whenever the thread is killed so no
-			return 0;
-		} else if (n == -1) {
-			// ret == -1 indicates error
-			box->n_subscribers -= 1;
-			close(sub_pipenum);
-			return -1;
+		
+		char *token = strtok(message, "\n");
+		printf("%s\n", token);
+   
+		/* walk through other tokens */
+		while( token != NULL ) {
+			// Sending read results to subscriber thread through pipe
+			strcpy(msg_buffer.message, token);
+			ssize_t n = write(sub_pipenum, &msg_buffer, sizeof(msg_buffer));
+			if (n == 0) {
+				// n == 0 indicates EOF
+				fprintf(stderr, "[INFO]: pipe closed\n");
+				box->n_subscribers -= 1;
+				// close(sub_pipenum); we only close the pipe whenever the thread is killed so no
+				return 0;
+			} else if (n == -1) {
+				// ret == -1 indicates error
+				box->n_subscribers -= 1;
+				close(sub_pipenum);
+				return -1;
+			}
+			token = strtok(NULL, "\n");
 		}
 
 
@@ -264,8 +276,7 @@ int handle_subscriber(const char *client_named_pipe_path, const char *box_name) 
 
 struct box_answer create_box(const char *box_name) {
 	// FIXME: garantir que se só se cria se a box não existir(se já existir deve falhar)
-	size_t n = strlen(box_name)+2;
-	char name[n];
+	char name[strlen(box_name)+2];
 	sprintf(name, "/%s", box_name); // FIXME: see if there is anything else that needs this
 	
 	int box_fd = tfs_open(name, TFS_O_CREAT);
@@ -346,7 +357,7 @@ int list_boxes(const char *client_named_pipe_path) {
 										head->box_size, head->n_publishers,
 										head->n_subscribers);
 		} else {
-			entry = box_list_entry_init(LIST_BOX_ANSWER_CODE, 1, head->box_name,
+			entry = box_list_entry_init(LIST_BOX_ANSWER_CODE, 0, head->box_name,
 										head->box_size, head->n_publishers,
 										head->n_subscribers);
 		}
