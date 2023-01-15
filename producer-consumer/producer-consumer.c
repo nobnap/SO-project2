@@ -88,7 +88,7 @@ void *pcq_dequeue(pc_queue_t *queue) {
 		queue->pcq_tail = 0;
 	else
 		queue->pcq_tail++;
-	pthread_mutex_unlock(&queue->pcq_head_lock);
+	pthread_mutex_unlock(&queue->pcq_tail_lock);
 
 	return elem;
 }
