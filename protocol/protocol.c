@@ -9,7 +9,7 @@ struct basic_request basic_request_init(uint8_t code, char const *pipe_path,
 		   sizeof(request.client_named_pipe_path));
 	strcpy(request.client_named_pipe_path, pipe_path);
 	memset(request.box_name, 0, sizeof(request.box_name));
-	strcpy(request.box_name, box_name);
+	if (box_name != NULL) strcpy(request.box_name, box_name);
 	return request;
 }
 

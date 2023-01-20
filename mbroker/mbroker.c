@@ -239,7 +239,9 @@ struct box_answer create_box(const char *box_name) {
 
 struct box_answer remove_box(const char *box_name) {
 
-	if (tfs_unlink(box_name) < 0 || head == NULL) {
+	char name[strlen(box_name)+2];
+	sprintf(name, "/%s", box_name); 
+	if (tfs_unlink(name) < 0 || head == NULL) {
 		return box_answer_init(REMOVE_BOX_ANSWER_CODE, -1, "unable to remove box.");
 	}
 
